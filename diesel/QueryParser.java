@@ -6,13 +6,12 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.ConsoleHandler;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 import javax.annotation.Nonnull;
 import diesel.security.Privilege;
@@ -41,44 +40,7 @@ import diesel.replication.Subscription;
  * @see Database
  */
 class QueryParser {
-    private static final Logger LOGGER;
-
-    static {
-        // Инициализация логгера
-        LOGGER = Logger.getLogger(QueryParser.class.getName());
-        // Отключение родительских обработчиков для избежания дублирования логов
-        LOGGER.setUseParentHandlers(false);
-        // Добавление ConsoleHandler
-        ConsoleHandler handler = new ConsoleHandler();
-        handler.setLevel(Level.ALL); // Устанавливаем минимальный уровень для обработчика
-        LOGGER.addHandler(handler);
-
-        // Загрузка уровня логирования. Системное свойство "logging.level.diesel"
-        // имеет приоритет над config.properties: тестовые профили large/perf/
-        // timing-quick передают -Dlogging.level.diesel=WARNING, чтобы подавить
-        // ~140MB INFO-вывода на каждый INSERT (TESTS-12). Без системного
-        // свойства источник и поведение не меняются.
-        Properties props = ConfigLoader.load();
-        String syspropLevel = System.getProperty("logging.level.diesel");
-        String logLevelStr = (syspropLevel != null ? syspropLevel
-                : props.isEmpty() ? "INFO" : props.getProperty("logging.level.diesel", "INFO"))
-                .toUpperCase();
-        try {
-            Level logLevel = Level.parse(logLevelStr);
-            LOGGER.setLevel(logLevel);
-            handler.setLevel(logLevel);
-            if (syspropLevel == null && props.isEmpty()) {
-                LOGGER.warning("config.properties not found, using default logging level INFO");
-            } else {
-                LOGGER.info("Logging level set to " + logLevelStr
-                        + (syspropLevel != null ? " from system property" : " from config.properties"));
-            }
-        } catch (IllegalArgumentException e) {
-            LOGGER.warning("Invalid logging level '" + logLevelStr + "', defaulting to INFO");
-            LOGGER.setLevel(Level.INFO);
-            handler.setLevel(Level.INFO);
-        }
-    }
+    private static final Logger LOGGER = LoggerFactory.getLogger(QueryParser.class);
     static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     static final DateTimeFormatter DATETIME_MS_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UUID_PATTERN = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
@@ -1233,7 +1195,7 @@ class QueryParser {
                         toUpperCasePreservingQuotedIdentifiers(normalized.substring(1, normalized.length() - 1).trim()))
                         .orElse(normalized);
             }
-            LOGGER.log(Level.FINE, "Normalized query: {0}", normalized);
+            LOGGER.debug("Normalized query: {}", normalized);
             Query<?> lexerResult = parseWithLexer(query, normalized, database);
             if (lexerResult != null) {
                 return lexerResult;
@@ -1245,7 +1207,7 @@ class QueryParser {
             }
             throw new IllegalArgumentException("Unsupported query type");
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
+            LOGGER.error("Failed to parse query: {}, Error: {}", query, e.getMessage());
             throw e;
         }
     }
@@ -1284,8 +1246,7 @@ class QueryParser {
                     return null;
             }
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Lexer-based parsing failed for query: {0}, Error: {1}",
-                    new Object[]{originalQuery, e.getMessage()});
+            LOGGER.warn("Lexer-based parsing failed for query: {}, Error: {}", originalQuery, e.getMessage());
             return null;
         }
     }
@@ -1948,8 +1909,7 @@ class QueryParser {
             }
         }
 
-        LOGGER.log(Level.INFO, "Parsed CREATE TABLE query: table={0}, columns={1}, types={2}, primaryKey={3}, sequences={4}",
-                new Object[]{tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet()});
+        LOGGER.info("Parsed CREATE TABLE query: table={}, columns={}, types={}, primaryKey={}, sequences={}", tableName, columns, columnTypes, primaryKeyColumn, sequences.keySet());
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences, columnCollations);
     }
@@ -2170,7 +2130,7 @@ class QueryParser {
 
     private int findMainFromClause(String query) {
         if (query == null || query.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}", query);
+            LOGGER.debug("Недопустимый ввод: query={}", query);
             return -1;
         }
 
@@ -2191,12 +2151,11 @@ class QueryParser {
         }
 
         if (bracketDepth != 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: bracketDepth={0}, query={1}",
-                    new Object[]{bracketDepth, query});
+LOGGER.error("Несбалансированные скобки в запросе: bracketDepth={}, query={}", bracketDepth, query);
             return -1;
         }
 
-        LOGGER.log(Level.FINEST, "Основной FROM не найден в запросе: {0}", query);
+        LOGGER.debug("Основной FROM не найден в запросе: {}", query);
         return -1;
     }
 
@@ -2233,8 +2192,7 @@ class QueryParser {
 
     private int handleMainFromToken(MainFromTokenInfo info, int bracketDepth, String query) {
         if (info.tokenType.equals(ErrorMessages.TAG_CLOSE_PAREN) && bracketDepth - 1 < 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                    new Object[]{info.startPos, query});
+LOGGER.error("Несбалансированные скобки в запросе на позиции {}: {}", info.startPos, query);
             return -2;
         }
         if (info.tokenType.equals("from") && bracketDepth == 0) {
@@ -2268,9 +2226,7 @@ class QueryParser {
         // Разделяем парсинг на фазы для снижения когнитивной сложности
         SelectQueryPhaseContext phaseContext = parseSelectQueryPhases(original, database);
         
-        LOGGER.log(Level.INFO, "Разобран SELECT-запрос: таблица={0}, столбцы={1}, агрегации={2}, соединения={3}, условия={4}",
-                new Object[]{phaseContext.tableName, phaseContext.columns, phaseContext.aggregates, 
-                           phaseContext.joins, phaseContext.conditions});
+        LOGGER.info("Разобран SELECT-запрос: таблица={}, столбцы={}, агрегации={}, соединения={}, условия={}", phaseContext.tableName, phaseContext.columns, phaseContext.aggregates, phaseContext.joins, phaseContext.conditions);
 
         return SelectQuery.builder()
                 .tableName(phaseContext.tableName)
@@ -2596,7 +2552,7 @@ class QueryParser {
             parseSelectColumn(columnMatcher, columns, columnAliases);
         } else if (trimmedItem.equals("*")) {
             columns.add("*");
-            LOGGER.log(Level.FINE, "Разобран столбец: *");
+            LOGGER.debug("Разобран столбец: *");
         } else {
             throw new IllegalArgumentException("Недопустимый элемент SELECT: " + trimmedItem);
         }
@@ -2614,8 +2570,7 @@ class QueryParser {
                     new Object[]{funcName, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
             return new AggregateFunction(funcName, new SubQuery(subQuery, null), alias);
         } else {
-            LOGGER.log(Level.FINE, "Parsed {0}({1}){2}",
-                    new Object[]{funcName, column == null ? "*" : column, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
+            LOGGER.debug("Parsed {}({}){}", funcName, column == null ? "*" : column, alias != null ? MessageConstants.SQL_AS_SPACED + alias : "");
             return new AggregateFunction(funcName, column, alias);
         }
     }
@@ -2638,8 +2593,7 @@ class QueryParser {
             String subQueryKey = ErrorMessages.SUBQUERY_PREFIX + subQueries.size();
             columnAliases.put(subQueryKey, alias);
         }
-        LOGGER.log(Level.FINE, "Parsed SELECT subquery: {0}{1}",
-                new Object[]{subQueryStr, alias != null ? MessageConstants.SQL_AS_SPACED + alias : ""});
+        LOGGER.debug("Parsed SELECT subquery: {}{}", subQueryStr, alias != null ? MessageConstants.SQL_AS_SPACED + alias : "");
     }
 
     private void parseSelectColumn(Matcher columnMatcher, List<String> columns, Map<String, String> columnAliases) {
@@ -2648,9 +2602,9 @@ class QueryParser {
         columns.add(column);
         if (alias != null) {
             columnAliases.put(column, alias);
-            LOGGER.log(Level.FINE, "Разобран столбец с алиасом: {0} AS {1}", new Object[]{column, alias});
+            LOGGER.debug("Разобран столбец с алиасом: {} AS {}", column, alias);
         } else {
-            LOGGER.log(Level.FINE, "Разобран столбец: {0}", new Object[]{column});
+            LOGGER.debug("Разобран столбец: {}", column);
         }
     }
 
@@ -3034,7 +2988,7 @@ class QueryParser {
 
     private int findClauseOutsideSubquery(String query, String clause) {
         if (query == null || clause == null || query.isEmpty() || clause.isEmpty()) {
-            LOGGER.log(Level.FINEST, "Недопустимый ввод: query={0}, clause={1}", new Object[]{query, clause});
+            LOGGER.debug("Недопустимый ввод: query={}, clause={}", query, clause);
             return -1;
         }
 
@@ -3056,8 +3010,7 @@ class QueryParser {
                 } else {
                     parenDepth = updateClauseScanParenDepth(token.tokenType, parenDepth);
                     if (parenDepth < 0) {
-                        LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                                new Object[]{currentPos, query});
+LOGGER.error("Несбалансированные скобки в запросе на позиции {}: {}", currentPos, query);
                         return -1;
                     }
                     currentPos = token.endPos;
@@ -3068,19 +3021,16 @@ class QueryParser {
         }
 
         if (parenDepth != 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: parenDepth={0}, query={1}",
-                    new Object[]{parenDepth, query});
+LOGGER.error("Несбалансированные скобки в запросе: parenDepth={}, query={}", parenDepth, query);
             return -1;
         }
 
         if (lastClauseIndex != -1) {
-            LOGGER.log(Level.FINEST, "Найдено последнее {0} на индексе {1} в запросе: {2}",
-                    new Object[]{clause, lastClauseIndex, query});
+LOGGER.debug("Найдено последнее {} на индексе {} в запросе: {}", clause, lastClauseIndex, query);
             return lastClauseIndex;
         }
 
-        LOGGER.log(Level.FINEST, "Допустимое {0} не найдено вне подзапросов в запросе: {1}",
-                new Object[]{clause, query});
+LOGGER.debug("Допустимое {} не найдено вне подзапросов в запросе: {}", clause, query);
         return -1;
     }
 
@@ -3168,7 +3118,7 @@ class QueryParser {
             String trimmedItem = item.trim();
             Matcher orderMatcher = orderPattern.matcher(trimmedItem);
             if (!orderMatcher.matches()) {
-                LOGGER.log(Level.SEVERE, "Invalid ORDER BY item: {0}", trimmedItem);
+                LOGGER.error("Invalid ORDER BY item: {}", trimmedItem);
                 throw new IllegalArgumentException("Invalid ORDER BY item: " + trimmedItem);
             }
             String column = unquoteQualifiedIdentifier(orderMatcher.group(1).trim());
@@ -3186,8 +3136,7 @@ class QueryParser {
             OrderColumnMatch match = resolveOrderColumn(orderContext);
 
             if (!match.found) {
-                LOGGER.log(Level.SEVERE, "Unknown column, alias, or subquery in ORDER BY: {0}, available columns: {1}, aliases: {2}, subqueries: {3}",
-                        new Object[]{unqualifiedColumn, combinedColumnTypes.keySet(), tableAliases.keySet(), subQueries});
+LOGGER.error("Unknown column, alias, or subquery in ORDER BY: {}, available columns: {}, aliases: {}, subqueries: {}", unqualifiedColumn, combinedColumnTypes.keySet(), tableAliases.keySet(), subQueries);
                 throw new IllegalArgumentException("Invalid column name or subquery in ORDER BY: " + unqualifiedColumn);
             }
             column = match.column;
@@ -3322,7 +3271,7 @@ class QueryParser {
                     groupBy.add(normalizedColumn);
                 }
             } else {
-                LOGGER.log(Level.SEVERE, "Недопустимый элемент GROUP BY: {0}", trimmedItem);
+                LOGGER.error("Недопустимый элемент GROUP BY: {}", trimmedItem);
                 throw new IllegalArgumentException("Недопустимый элемент GROUP BY: " + trimmedItem);
             }
         }
@@ -3331,7 +3280,7 @@ class QueryParser {
 
 
     private void validateJoinCondition(Condition condition, String leftTable, String rightTable, Map<String, String> tableAliases) {
-        LOGGER.log(Level.FINEST, "Validating condition: {0} for tables {1}, {2}, aliases: {3}", new Object[]{condition, leftTable, rightTable, tableAliases});
+        LOGGER.debug("Validating condition: {} for tables {}, {}, aliases: {}", condition, leftTable, rightTable, tableAliases);
         if (condition.isGrouped()) {
             for (Condition subCond : condition.subConditions) {
                 validateJoinCondition(subCond, leftTable, rightTable, tableAliases);
@@ -3404,8 +3353,7 @@ class QueryParser {
                 String column = columns.get(i);
                 Class<?> columnType = columnTypes.get(column);
                 if (columnType == null) {
-                    LOGGER.log(Level.SEVERE, "Unknown column in INSERT: {0}, available columns: {1}",
-                            new Object[]{column, columnTypes.keySet()});
+LOGGER.error("Unknown column in INSERT: {}, available columns: {}", column, columnTypes.keySet());
                     throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
                 }
                 values.add(parseConditionValue(val, columnType));
@@ -3413,8 +3361,7 @@ class QueryParser {
             valueRows.add(values);
         }
 
-        LOGGER.log(Level.INFO, "Parsed INSERT query: table={0}, columns={1}, rows={2}",
-                new Object[]{tableName, columns, valueRows.size()});
+        LOGGER.info("Parsed INSERT query: table={}, columns={}, rows={}", tableName, columns, valueRows.size());
 
         return valueRows.size() == 1
                 ? new InsertQuery(columns, valueRows.get(0))
@@ -3476,16 +3423,14 @@ class QueryParser {
             String valueStr = kv[1].trim();
             Class<?> columnType = columnTypes.get(column);
             if (columnType == null) {
-                LOGGER.log(Level.SEVERE, "Unknown column in UPDATE: {0}, available columns: {1}",
-                        new Object[]{column, columnTypes.keySet()});
+LOGGER.error("Unknown column in UPDATE: {}, available columns: {}", column, columnTypes.keySet());
                 throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
             }
             Object value = parseConditionValue(valueStr, columnType);
             updates.put(column, value);
         }
 
-        LOGGER.log(Level.INFO, "Parsed UPDATE query: table={0}, alias={1}, updates={2}, conditions={3}",
-                new Object[]{tableName, tableAlias, updates, conditions});
+        LOGGER.info("Parsed UPDATE query: table={}, alias={}, updates={}, conditions={}", tableName, tableAlias, updates, conditions);
 
         return new UpdateQuery(updates, conditions);
     }
@@ -3497,7 +3442,7 @@ class QueryParser {
         // Use normalized query for table name extraction (identifiers are uppercased)
         String[] fromParts = normalized.split(ErrorMessages.FROM_PATTERN, 2);
         if (fromParts.length != 2) {
-            LOGGER.log(Level.SEVERE, "Invalid DELETE query format: missing FROM clause, normalized: {0}", normalized);
+            LOGGER.error("Invalid DELETE query format: missing FROM clause, normalized: {}", normalized);
             throw new SyntaxErrorException("Invalid DELETE query format: missing FROM clause");
         }
         String tableAndConditionNorm = fromParts[1].trim();
@@ -3516,7 +3461,7 @@ class QueryParser {
                 String conditionStr = wherePartsOrig[1].trim();
                 LOGGER.log(Level.FINE, "Parsing WHERE clause for DELETE: {0}", conditionStr);
                 if (conditionStr.isEmpty()) {
-                    LOGGER.log(Level.SEVERE, "Empty WHERE clause in DELETE query: {0}", original);
+                    LOGGER.error("Empty WHERE clause in DELETE query: {}", original);
                     throw new IllegalArgumentException("Invalid DELETE query: empty WHERE clause");
                 }
                 Table table = database.getTable(tableName);
@@ -3532,8 +3477,7 @@ class QueryParser {
             LOGGER.log(Level.FINE, "No WHERE clause in DELETE query");
         }
 
-        LOGGER.log(Level.INFO, "Parsed DELETE query: table={0}, conditions={1}",
-                new Object[]{tableName, conditions});
+        LOGGER.info("Parsed DELETE query: table={}, conditions={}", tableName, conditions);
 
         return new DeleteQuery(conditions);
     }
@@ -3697,8 +3641,7 @@ class QueryParser {
                 break;
             }
 
-            LOGGER.log(Level.FINEST, "Processing token at position {0}: {1}",
-                    new Object[]{currentPos, conditionStr.substring(currentPos)});
+LOGGER.debug("Processing token at position {}: {}", currentPos, conditionStr.substring(currentPos));
 
             TokenMatchResult matchResult = findTokenMatch(conditionStr, currentPos, stringLength, patterns, tokens);
             if (matchResult.matched) {
@@ -3713,7 +3656,7 @@ class QueryParser {
         }
 
         if (tokens.isEmpty()) {
-            LOGGER.log(Level.SEVERE, "Не удалось выделить токены из условия: {0}", conditionStr);
+            LOGGER.error("Не удалось выделить токены из условия: {}", conditionStr);
             throw new IllegalArgumentException("Невалидное условие: не удалось выделить токенов из '" + conditionStr + "'");
         }
 
@@ -3737,7 +3680,7 @@ class QueryParser {
             if (qsMatcher.lookingAt()) {
                 String qsToken = qsMatcher.group();
                 tokens.add(new Token(TokenType.CONDITION, qsToken));
-                LOGGER.log(Level.FINEST, "Добавлен токен Quoted String: {0}", qsToken);
+                LOGGER.debug("Добавлен токен Quoted String: {}", qsToken);
                 return new TokenMatchResult(true, false, qsMatcher.end(), null, null);
             }
             // Quoted string pattern didn't match — try other patterns below
@@ -3748,7 +3691,7 @@ class QueryParser {
             int endParen = findMatchingParenthesis(conditionStr, currentPos);
             String groupedToken = conditionStr.substring(currentPos, endParen + 1);
             tokens.add(new Token(TokenType.CONDITION, groupedToken));
-            LOGGER.log(Level.FINEST, "Добавлен токен группированного условия: {0}", groupedToken);
+            LOGGER.debug("Добавлен токен группированного условия: {}", groupedToken);
             return new TokenMatchResult(true, false, endParen + 1, null, null);
         }
         // Проверяем остальные паттерны, исключая содержимое строк
@@ -3765,8 +3708,7 @@ class QueryParser {
             if (matcher.lookingAt()) {
                 String tokenValue = matcher.group().trim();
                 if (logMatching) {
-                    LOGGER.log(Level.FINEST, "Паттерн '{0}' сработал, токен: {1}, конец: {2}",
-                            new Object[]{patternName, tokenValue, matcher.end()});
+LOGGER.debug("Паттерн '{}' сработал, токен: {}, конец: {}", patternName, tokenValue, matcher.end());
                 }
                 if (!tokenValue.isEmpty()) {
                     return new TokenMatchResult(false, true, matcher.end(), tokenValue, patternName);
@@ -3789,7 +3731,7 @@ class QueryParser {
                 pattern = pattern.substring(1, pattern.length() - 1);
                 validateLikePattern(pattern, currentPos);
                 tokens.add(new Token(TokenType.CONDITION, matchedToken));
-                LOGGER.log(Level.FINEST, "Добавлен токен Like Condition: {0}", matchedToken);
+                LOGGER.debug("Добавлен токен Like Condition: {}", matchedToken);
             } else {
                 LOGGER.log(Level.WARNING, "Некорректный LIKE токен на позиции {0}: {1}",
                         new Object[]{currentPos, matchedToken});
@@ -3797,14 +3739,14 @@ class QueryParser {
             }
         } else if (matchedPatternName.equals(MessageConstants.TOKEN_LOGICAL_OPERATOR)) {
             tokens.add(new Token(TokenType.LOGICAL_OPERATOR, matchedToken));
-            LOGGER.log(Level.FINEST, "Добавлен токен Logical Operator: {0}", matchedToken);
+            LOGGER.debug("Добавлен токен Logical Operator: {}", matchedToken);
         } else if (matchedPatternName.equals("Invalid Token")) {
             LOGGER.log(Level.WARNING, "Обнаружен некорректный токен на позиции {0}: {1}",
                     new Object[]{currentPos, matchedToken});
             throw new IllegalArgumentException("Некорректный токен в условии на позиции " + currentPos + ": " + matchedToken);
         } else {
             tokens.add(new Token(TokenType.CONDITION, matchedToken));
-            LOGGER.log(Level.FINEST, "Добавлен токен условия: {0}", matchedToken);
+            LOGGER.debug("Добавлен токен условия: {}", matchedToken);
         }
     }
 
@@ -3826,8 +3768,7 @@ class QueryParser {
             switch (token.type) {
                 case LOGICAL_OPERATOR -> {
                     conjunction = token.value.toUpperCase();
-                    LOGGER.log(Level.FINEST, "Processing logical operator: {0}, setting conjunction to {1}",
-                            new Object[]{token.value, conjunction});
+LOGGER.debug("Processing logical operator: {}, setting conjunction to {}", token.value, conjunction);
                 }
                 case CONDITION -> {
                     if (token.value.equalsIgnoreCase(SqlKeywords.NOT)) {
@@ -3849,12 +3790,12 @@ class QueryParser {
     private Condition processConditionToken(String condStr, ParseContext ctx, String conjunction, boolean not) {
         if (condStr.equalsIgnoreCase(SqlKeywords.NOT)) {
             not = true;
-            LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+            LOGGER.debug("Processing NOT keyword, negation enabled for next condition");
             return null;
         }
         
         if (isQuotedString(condStr)) {
-            LOGGER.log(Level.FINEST, "Skipping quoted string token: {0}", condStr);
+            LOGGER.debug("Skipping quoted string token: {}", condStr);
             return null;
         }
         
@@ -3885,25 +3826,24 @@ class QueryParser {
 
     private void validateSubquery(String subquery) {
         if (!subquery.startsWith("(") || !subquery.endsWith(")")) {
-            LOGGER.log(Level.SEVERE, "Subquery does not start with '(' or end with ')': {0}", subquery);
+            LOGGER.error("Subquery does not start with '(' or end with ')': {}", subquery);
             throw new IllegalArgumentException("Invalid subquery syntax: " + subquery);
         }
         long openParen = subquery.chars().filter(c -> c == '(').count();
         long closeParen = subquery.chars().filter(c -> c == ')').count();
         if (openParen != closeParen) {
-            LOGGER.log(Level.SEVERE, "Unbalanced parentheses in subquery: {0}, open={1}, close={2}",
-                    new Object[]{subquery, openParen, closeParen});
+LOGGER.error("Unbalanced parentheses in subquery: {}, open={}, close={}", subquery, openParen, closeParen);
             throw new IllegalArgumentException(ErrorMessages.UNBALANCED_PARENS_SUBQUERY + subquery);
         }
         String upperSubquery = subquery.toUpperCase();
         if (!upperSubquery.contains(SqlKeywords.SELECT + " ") || !upperSubquery.contains("FROM ")) {
-            LOGGER.log(Level.SEVERE, "Subquery missing SELECT or FROM clause: {0}", subquery);
+            LOGGER.error("Subquery missing SELECT or FROM clause: {}", subquery);
             throw new IllegalArgumentException("Subquery must contain SELECT and FROM clauses: " + subquery);
         }
         int selectIndex = upperSubquery.indexOf(SqlKeywords.SELECT + " ");
         int fromIndex = upperSubquery.indexOf("FROM ", selectIndex);
         if (fromIndex == -1 || fromIndex < selectIndex) {
-            LOGGER.log(Level.SEVERE, "Invalid subquery structure: SELECT and FROM out of order in {0}", subquery);
+            LOGGER.error("Invalid subquery structure: SELECT and FROM out of order in {}", subquery);
             throw new IllegalArgumentException("Invalid subquery structure: " + subquery);
         }
         LOGGER.log(Level.FINE, "Validated subquery: {0}", subquery);
@@ -3945,7 +3885,7 @@ class QueryParser {
 
     private Condition parseSingleCondition(String condStr, ParseContext ctx,
                                            String conjunction, boolean not, String conditionStr) {
-        LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, conditionStr});
+        LOGGER.debug("Parsing single condition: {}, full condition={}", condStr, conditionStr);
 
         String normalizedCondStr = normalizeCondition(condStr);
         if (isGroupedCondition(normalizedCondStr)) {
@@ -3983,7 +3923,7 @@ class QueryParser {
             return new Condition(actualColumn, parsedValue, operator, conjunction, not);
         }
 
-        LOGGER.log(Level.FINEST, "Передача в parseComparisonCondition: condStr={0}", normalizedCondStr);
+        LOGGER.debug("Передача в parseComparisonCondition: condStr={}", normalizedCondStr);
         return parseComparisonCondition(normalizedCondStr, ctx, conjunction, not);
     }
 
@@ -4140,10 +4080,10 @@ class QueryParser {
 
     private Condition parseComparisonCondition(String condStr, ParseContext ctx,
                                                String conjunction, boolean not) {
-        LOGGER.log(Level.FINEST, "Parsing comparison condition: {0}", condStr);
+        LOGGER.debug("Parsing comparison condition: {}", condStr);
         OperatorInfo operatorInfo = findOperator(condStr, COMPARISON_OPERATOR_PATTERNS);
         if (operatorInfo == null) {
-            LOGGER.log(Level.SEVERE, "No valid operator found in condition: {0}", condStr);
+            LOGGER.error("No valid operator found in condition: {}", condStr);
             throw new IllegalArgumentException("Invalid condition: no valid operator found in '" + condStr + "'");
         }
 
@@ -4232,8 +4172,7 @@ class QueryParser {
             Object value = parseConditionValue(rightPart, columnType);
             return new RightPart(null, value);
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Failed to parse rightPart as value, rechecking as column: rightPart={0}, error={1}",
-                    new Object[]{rightPart, e.getMessage()});
+            LOGGER.warn("Failed to parse rightPart as value, rechecking as column: rightPart={}, error={}", rightPart, e.getMessage());
             if (isColumnReference(rightPart)) {
                 return parseColumnReference(rightPart);
             } else {
@@ -4642,7 +4581,7 @@ class QueryParser {
         String subQueryStr = str.substring(startIndex, endIndex + 1);
         Pattern selectPattern = SUBQUERY_STRUCTURE_PATTERN;
         if (!selectPattern.matcher(subQueryStr).matches()) {
-            LOGGER.log(Level.WARNING, "Подзапрос может быть некорректным: {0}", subQueryStr);
+            LOGGER.warn("Подзапрос может быть некорректным: {}", subQueryStr);
         }
     }
 

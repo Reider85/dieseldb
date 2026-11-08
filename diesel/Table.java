@@ -42,8 +42,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
     import java.util.function.Function;
-    import java.util.logging.Logger;
-    import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
     import java.util.zip.CRC32;
     import java.util.stream.IntStream;
     import java.nio.file.Files;
@@ -146,7 +146,7 @@ interface Index {
 class Table implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final int CURRENT_FORMAT_VERSION = 5;
-    private static final Logger LOGGER = Logger.getLogger(Table.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(Table.class);
     private final String name;
     private transient List<String> columns;
     private transient Map<String, Class<?>> columnTypes;
@@ -430,8 +430,8 @@ class Table implements Serializable {
             createUniqueClusteredIndex(primaryKeyColumn);
         }
 
-        LOGGER.log(Level.INFO, "Created table: {0} with columns {1}, types {2}, primary key: {3}, sequences: {4}",
-                new Object[]{name, columns, columnTypes, primaryKeyColumn, this.sequences.keySet()});
+        LOGGER.info("Created table: {} with columns {}, types {}, primary key: {}, sequences: {}",
+                name, columns, columnTypes, primaryKeyColumn, this.sequences.keySet());
     }
 
     /**
@@ -567,15 +567,14 @@ class Table implements Serializable {
     private void validateSchema(List<String> columns, Map<String, Class<?>> columnTypes) {
         for (String column : columns) {
             if (!columnTypes.containsKey(column)) {
-                LOGGER.log(Level.SEVERE, "Schema validation failed: Column {0} missing in columnTypes {1}",
-                        new Object[]{column, columnTypes.keySet()});
+                LOGGER.error("Schema validation failed: Column {} missing in columnTypes {}",
+                        column, columnTypes.keySet());
                 throw new IllegalArgumentException(ErrorMessages.COLUMN_PREFIX + column + " missing in columnTypes");
             }
         }
         for (String column : columnTypes.keySet()) {
             if (!columns.contains(column)) {
-                LOGGER.log(Level.WARNING, "Column {0} in columnTypes but not in columns list {1}",
-                        new Object[]{column, columns});
+                LOGGER.warn("Column {} in columnTypes but not in columns list {}", column, columns);
             }
         }
     }
@@ -646,8 +645,8 @@ class Table implements Serializable {
         indexDefinitions.keySet().removeIf(key ->
                 indexKeyTouchesColumn(key, column) || indexCoversColumn(key, column));
         if (!removed.isEmpty()) {
-            LOGGER.log(Level.INFO, "Dropped index(es) {0} on column {1} of table {2} (DROP COLUMN)",
-                    new Object[]{removed, column, name});
+            LOGGER.info("Dropped index(es) {} on column {} of table {} (DROP COLUMN)",
+                    removed, column, name);
         }
         return removed;
     }
@@ -756,7 +755,7 @@ class Table implements Serializable {
      */
     public void createBTreeIndex(String columnName) {
         createSecondaryIndex(columnName, ErrorMessages.INDEX_BTREE, BTreeIndex::new, false);
-        LOGGER.log(Level.INFO, "Created B-tree index on column {0} for table {1}", new Object[]{columnName, name});
+        LOGGER.info("Created B-tree index on column {} for table {}", columnName, name);
     }
 
     /**
@@ -768,7 +767,7 @@ class Table implements Serializable {
      */
     public void createHashIndex(String columnName) {
         createSecondaryIndex(columnName, ErrorMessages.INDEX_HASH, HashIndex::new, false);
-        LOGGER.log(Level.INFO, "Created hash index on column {0} for table {1}", new Object[]{columnName, name});
+        LOGGER.info("Created hash index on column {} for table {}", columnName, name);
     }
 
     /**
@@ -781,7 +780,7 @@ class Table implements Serializable {
      */
     public void createUniqueIndex(String columnName) {
         createSecondaryIndex(columnName, ErrorMessages.INDEX_UNIQUE, UniqueIndex::new, true);
-        LOGGER.log(Level.INFO, "Created unique index on column {0} for table {1}", new Object[]{columnName, name});
+        LOGGER.info("Created unique index on column {} for table {}", columnName, name);
     }
 
     /**
@@ -842,8 +841,8 @@ class Table implements Serializable {
         String compositeKey = String.join("+", columnNames);
         indexes.put(compositeKey, index);
         indexDefinitions.put(compositeKey, ErrorMessages.INDEX_COMPOSITE_BTREE);
-        LOGGER.log(Level.INFO, "Created composite B-tree index on {0} for table {1}",
-                new Object[]{compositeKey, name});
+        LOGGER.info("Created composite B-tree index on {} for table {}",
+                compositeKey, name);
     }
 
     /**
@@ -918,8 +917,8 @@ class Table implements Serializable {
         indexes.put(indexColumn, index);
         indexDefinitions.put(indexColumn, ErrorMessages.INDEX_COVERING_BTREE);
         setCoverColumnNames(indexColumn, coverColumns);
-        LOGGER.log(Level.INFO, "Created covering B-tree index on {0} (covers {1}) for table {2}",
-                new Object[]{indexColumn, coverColumns, name});
+        LOGGER.info("Created covering B-tree index on {} (covers {}) for table {}",
+                indexColumn, coverColumns, name);
     }
 
     /**
@@ -1065,7 +1064,7 @@ class Table implements Serializable {
             tableLock.writeLock().unlock();
         }
 
-        LOGGER.log(Level.INFO, "Created unique clustered B-tree index on column {0} for table {1}", new Object[]{columnName, name});
+        LOGGER.info("Created unique clustered B-tree index on column {} for table {}", columnName, name);
     }
 
     private int compareKeys(Object k1, Object k2) {
@@ -1780,8 +1779,8 @@ class Table implements Serializable {
             lastAnalyzedMillis = System.currentTimeMillis();
             statsDirty = false;
         }
-        LOGGER.log(Level.INFO, "Table {0} analyzed: {1} rows, avg row size {2} bytes",
-                new Object[]{name, rowCount, avgRowSizeBytes});
+        LOGGER.info("Table {} analyzed: {} rows, avg row size {} bytes",
+                name, rowCount, avgRowSizeBytes);
         return getStatistics();
     }
 
@@ -1853,7 +1852,7 @@ class Table implements Serializable {
                 return Math.max(1, total / Math.min(n, rows.size()));
             } catch (ConcurrentModificationException ignored) {
                 // Rows changed while measuring; retry.
-                LOGGER.log(Level.FINE, "Concurrent modification during row size estimation, retrying");
+                LOGGER.debug("Concurrent modification during row size estimation, retrying");
             }
         }
         return estimateAverageRowSizeBytes();
@@ -2289,8 +2288,8 @@ class Table implements Serializable {
             return;
         }
         if (hasUncommittedMvccChanges()) {
-            LOGGER.log(Level.FINE,
-                    "Skipping reloadFromStorage for table {0}: rows carry pending MVCC changes", name);
+            LOGGER.debug(
+                    "Skipping reloadFromStorage for table {}: rows carry pending MVCC changes", name);
             return;
         }
         List<Map<String, Object>> loaded = new ArrayList<>(storage.scan());
@@ -2299,8 +2298,8 @@ class Table implements Serializable {
             if (dualWrite != null) {
                 // Wholesale mirror replacement would desynchronize the ALTER
                 // COPY journal (prompt4 #38); the bulk load is deferred.
-                LOGGER.log(Level.FINE,
-                        "Skipping reloadFromStorage for table {0}: ALTER COPY in progress", name);
+                LOGGER.debug(
+                        "Skipping reloadFromStorage for table {}: ALTER COPY in progress", name);
                 return;
             }
             rows.clear();
@@ -2315,8 +2314,8 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
-        LOGGER.log(Level.INFO, "Table {0}: reloaded mirror from storage ({1} rows)",
-                new Object[]{name, rows.size()});
+        LOGGER.info("Table {}: reloaded mirror from storage ({} rows)",
+                name, rows.size());
     }
 
     /**
@@ -2329,16 +2328,16 @@ class Table implements Serializable {
             if (dualWrite != null) {
                 // Index-shifting rewrite: defer it while an online ALTER COPY
                 // journals position-based events (prompt4 #38). Vacuum retries.
-                LOGGER.log(Level.FINE,
-                        "Skipping compaction of table {0}: ALTER COPY in progress", name);
+                LOGGER.debug(
+                        "Skipping compaction of table {}: ALTER COPY in progress", name);
                 return;
             }
             if (hasUncommittedMvccChanges()) {
                 // Undo records hold raw row indexes; compacting now would
                 // invalidate every pending record. Defer until the open
                 // transactions commit or roll back.
-                LOGGER.log(Level.FINE,
-                        "Skipping compaction of table {0}: rows carry pending MVCC changes", name);
+                LOGGER.debug(
+                        "Skipping compaction of table {}: rows carry pending MVCC changes", name);
                 return;
             }
             if (hasSnapshotDependentTombstones()) {
@@ -2346,8 +2345,8 @@ class Table implements Serializable {
                 // survive physical removal: REPEATABLE READ readers still need
                 // the row (and its pre-image) until their transaction ends.
                 // Vacuum clears it later once the horizon passes the delete.
-                LOGGER.log(Level.FINE,
-                        "Skipping compaction of table {0}: tombstones still visible to an open snapshot", name);
+                LOGGER.debug(
+                        "Skipping compaction of table {}: tombstones still visible to an open snapshot", name);
                 return;
             }
             int deleted = getDeletedCount();
@@ -2428,8 +2427,8 @@ class Table implements Serializable {
             // until the column name is re-ADDed (which clears it) or the table
             // closes. Cost: one small set lookup per SELECT * key.
 
-            LOGGER.log(Level.INFO, "Compacted table {0}: removed {1} tombstones, {2} live rows remain",
-                    new Object[]{name, deleted, rows.size()});
+LOGGER.info("Compacted table {}: removed {} tombstones, {} live rows remain",
+                name, deleted, rows.size());
         } finally {
             tableLock.writeLock().unlock();
         }
@@ -3038,9 +3037,9 @@ class Table implements Serializable {
                     clusteredRestoredOnLoad = true;
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING,
-                        "Failed to read serialized index block in table {0}, will rebuild from rows: {1}",
-                        new Object[]{name, e.getMessage()});
+                LOGGER.warn(
+                        "Failed to read serialized index block in table {}, will rebuild from rows: {}",
+                        name, e.getMessage());
             }
         } else if (indexDefinitions != null && !indexDefinitions.isEmpty()) {
             // Legacy format: warn about rebuilding indexes from rows
@@ -3048,9 +3047,9 @@ class Table implements Serializable {
             if (hasClusteredIndex) {
                 indexCount++;
             }
-            LOGGER.log(Level.WARNING,
-                    "Table {0} loaded from legacy format v{1} (no serialized index block): rebuilding {2} index(es) from rows",
-                    new Object[]{name, formatVersion, indexCount});
+            LOGGER.warn(
+                    "Table {} loaded from legacy format v{} (no serialized index block): rebuilding {} index(es) from rows",
+                    name, formatVersion, indexCount);
         }
         
         // Fallback: rebuild clustered index from rows if not restored from serialized data.
@@ -3067,16 +3066,15 @@ class Table implements Serializable {
             }
             clusteredIndex.bulkLoad(keys, indices);
             indexesRebuiltOnLoad++;
-            LOGGER.log(Level.FINE,
-                    "Rebuilt clustered index from rows for table {0}", name);
+            LOGGER.debug(
+                    "Rebuilt clustered index from rows for table {}", name);
         }
         // Rebuild only secondary indexes that weren't restored from serialized data.
         if (indexDefinitions != null && !indexDefinitions.isEmpty()) {
             rebuildMissingSecondaryIndexes();
         } else {
-            LOGGER.log(Level.FINE,
-                    "No secondary index definitions found for table {0} during deserialization",
-                    name);
+            LOGGER.debug(
+                    "No secondary index definitions found for table {} during deserialization", name);
         }
         // Format v4+: hidden dropped-column keys still materialized in row maps
         // (prompt4 #39). Older files carry no such keys (set stays null).
@@ -3181,8 +3179,8 @@ class Table implements Serializable {
                 if (key == null) {
                     throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
                 }
-                if (clusteredKeyBlocked(key)) {
-                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+if (clusteredKeyBlocked(key)) {
+                    LOGGER.warn("Duplicate clustered key detected: key '{}' in column {}", key, clusteredIndexColumn);
                     throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
                 }
                 if (getDeletedCount() > 0) {
@@ -3198,7 +3196,7 @@ class Table implements Serializable {
             if (token != null && token.tracking) {
                 event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, null);
             }
-            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+            LOGGER.debug("Inserted row into table {}: {}", name, validatedRow);
         } finally {
             if (token != null) {
                 coordinator.endMutation(token, event);
@@ -3262,7 +3260,7 @@ class Table implements Serializable {
                     throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
                 }
                 if (clusteredKeyBlocked(key)) {
-                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                    LOGGER.warn("Duplicate clustered key detected: key '{}' in column {}", key, clusteredIndexColumn);
                     throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
                 }
                 if (getDeletedCount() > 0) {
@@ -3283,7 +3281,7 @@ class Table implements Serializable {
             if (token != null && token.tracking) {
                 event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, getRowVersionMeta(rowIndex));
             }
-            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{name, validatedRow});
+            LOGGER.debug("Inserted row into table {}: {}", name, validatedRow);
             resultIndex = rowIndex;
         } finally {
             if (token != null) {
@@ -3299,7 +3297,7 @@ class Table implements Serializable {
                 && value != null) {
             for (int hit : index.search(value)) {
                 if (blocksUniqueInsert(hit, column, value)) {
-                    LOGGER.log(Level.WARNING, "Duplicate key detected: key '{0}' in column {1}; skipping insertion", new Object[]{value, column});
+                    LOGGER.warn("Duplicate key detected: key '{}' in column {}; skipping insertion", value, column);
                     throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + value + ErrorMessages.ALREADY_EXISTS_SUFFIX + ErrorMessages.IN_COLUMN + column);
                 }
                 if (isIndexEntryDead(hit)) {
@@ -3676,8 +3674,8 @@ class Table implements Serializable {
         } finally {
             tableLock.writeLock().unlock();
         }
-        LOGGER.log(Level.INFO, "Bulk inserted {0} rows into table {1} (total {2})",
-                new Object[]{validatedRows.size(), name, rows.size()});
+        LOGGER.info("Bulk inserted {} rows into table {} (total {})",
+                validatedRows.size(), name, rows.size());
     }
 
     /**
@@ -3759,7 +3757,7 @@ class Table implements Serializable {
      */
     public void disableIndices() {
         indicesDisabled = true;
-        LOGGER.log(Level.INFO, "Index maintenance disabled for table {0}", name);
+        LOGGER.info("Index maintenance disabled for table {}", name);
     }
 
     /**
@@ -3770,7 +3768,7 @@ class Table implements Serializable {
     public void enableAndRebuildIndices() {
         indicesDisabled = false;
         rebuildAllIndexes();
-        LOGGER.log(Level.INFO, "Index maintenance re-enabled and indexes rebuilt for table {0}", name);
+        LOGGER.info("Index maintenance re-enabled and indexes rebuilt for table {}", name);
     }
 
     /**
@@ -3781,7 +3779,7 @@ class Table implements Serializable {
      */
     public void deferIndexUpdates() {
         deferredIndexOps = new ArrayList<>();
-        LOGGER.log(Level.FINE, "Deferred index mode activated for table {0}", name);
+        LOGGER.debug("Deferred index mode activated for table {}", name);
     }
 
     /**
@@ -3799,7 +3797,7 @@ class Table implements Serializable {
         }
         deferredIndexOps = null;
         rebuildAllIndexes();
-        LOGGER.log(Level.FINE, "Deferred index operations flushed and indexes rebuilt for table {0}", name);
+        LOGGER.debug("Deferred index operations flushed and indexes rebuilt for table {}", name);
     }
 
     /**
@@ -3882,9 +3880,9 @@ class Table implements Serializable {
             case ErrorMessages.INDEX_COMPOSITE_BTREE -> buildCompositeIndex(column, n);
             case ErrorMessages.INDEX_COVERING_BTREE -> buildCoveringIndex(column, keyType, n);
             default -> {
-                LOGGER.log(Level.WARNING,
-                        "Unknown index type ''{0}'' for column ''{1}'' in table {2}, skipping rebuild",
-                        new Object[]{indexType, column, name});
+                LOGGER.warn(
+                        "Unknown index type ''{}'' for column ''{}'' in table {}, skipping rebuild",
+                        indexType, column, name);
                 yield null;
             }
         };
@@ -4133,12 +4131,12 @@ class Table implements Serializable {
         registerPendingPersist(this);
         PersistFlusher.signal();
         if (flushNow) {
-            LOGGER.log(Level.FINE,
-                    "Coalesced persist for table {0} signaled flusher ({1} pending mutations)",
-                    new Object[]{name, pendingPersistCount});
+            LOGGER.debug(
+                    "Coalesced persist for table {} signaled flusher ({} pending mutations)",
+                    name, pendingPersistCount);
         } else {
-            LOGGER.log(Level.FINE, "Coalesced persist for table {0} ({1} pending mutations)",
-                    new Object[]{name, pendingPersistCount});
+            LOGGER.debug("Coalesced persist for table {} ({} pending mutations)",
+                    name, pendingPersistCount);
         }
     }
 
@@ -4204,14 +4202,14 @@ class Table implements Serializable {
                 // Skip tables whose data directory no longer exists (e.g., @TempDir deleted by JUnit)
                 if (!Files.exists(Path.of(table.database.getDataDir()))) {
                     unregisterPendingPersist(table);
-                    LOGGER.log(Level.FINE, "Skipped persist for table {0} (data dir deleted): {1}", 
-                            new Object[]{table.name, table.database.getDataDir()});
+                    LOGGER.debug("Skipped persist for table {} (data dir deleted): {}", 
+                            table.name, table.database.getDataDir());
                     continue;
                 }
                 try {
                     table.flushPendingPersist(table.name);
                 } catch (RuntimeException e) {
-                    LOGGER.log(Level.WARNING, "Failed to flush pending persist for table " + table.name, e);
+                    LOGGER.warn("Failed to flush pending persist for table " + table.name, e);
                 }
             }
         }
@@ -4227,7 +4225,7 @@ class Table implements Serializable {
                 try {
                     table.flushPendingPersist(table.name);
                 } catch (RuntimeException e) {
-                    LOGGER.log(Level.WARNING, "Failed to flush pending persist for table " + table.name, e);
+                    LOGGER.warn("Failed to flush pending persist for table " + table.name, e);
                 }
             }
         }
@@ -4323,10 +4321,10 @@ class Table implements Serializable {
 
             afw.commit();
             isFileInitialized = true;
-            LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                    new Object[]{tableName, fileName, rows.size()});
+            LOGGER.info("Table {} saved to file {} with {} rows",
+                    tableName, fileName, rows.size());
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+            LOGGER.error("Failed to save table to file: {}", fileName);
             throw new DieselIOException("Failed to save table to file: " + fileName, e);
         }
     }
@@ -4374,10 +4372,10 @@ class Table implements Serializable {
                 oos.flush();
                 afw.commit();
                 isFileInitialized = true;
-                LOGGER.log(Level.INFO, "Table {0} saved to file {1} with {2} rows",
-                        new Object[]{tableName, fileName, rows.size()});
+                LOGGER.info("Table {} saved to file {} with {} rows",
+                        tableName, fileName, rows.size());
             } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to save table to file: {0}", fileName);
+                LOGGER.error("Failed to save table to file: {}", fileName);
                 throw new DieselIOException("Failed to save table to file: " + fileName, e);
             }
         } finally {
@@ -4401,8 +4399,8 @@ class Table implements Serializable {
         File file = new File(fileName);
         if (!file.exists()) {
             AtomicFileWriter.warnInterruptedWrite(file.toPath());
-            LOGGER.log(Level.INFO, "Serialized file {0} not found, creating new table {1} with base structure",
-                    new Object[]{fileName, tableName});
+            LOGGER.info("Serialized file {} not found, creating new table {} with base structure",
+                    fileName, tableName);
             Table table = new Table(database, tableName, new ArrayList<>(), new HashMap<>(), null, new HashMap<String, Sequence>());
             table.formatVersion = CURRENT_FORMAT_VERSION;
             table.setFileInitialized(false);
@@ -4423,11 +4421,11 @@ class Table implements Serializable {
                     }
                 }
                 table.setFileInitialized(true);
-                LOGGER.log(Level.INFO, "Table {0} loaded from file {1}", new Object[]{tableName, fileName});
+                LOGGER.info("Table {} loaded from file {}", tableName, fileName);
                 return table;
             }
             if (obj instanceof AbstractRowStorage.SerializedTableData data) {
-                LOGGER.log(Level.INFO, "Table {0} .table contains storage mirror (SerializedTableData), "
+                LOGGER.info("Table {} .table contains storage mirror (SerializedTableData), "
                         + "loading via storage auto_mtime path", tableName);
                 Table table = new Table(database, tableName,
                         new ArrayList<>(data.columns), new TreeMap<>(data.columnTypes),
@@ -4443,8 +4441,8 @@ class Table implements Serializable {
             }
             throw new ClassNotFoundException("Unexpected object type in " + fileName + ": " + obj.getClass());
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to load table {0}, creating empty: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            LOGGER.warn("Failed to load table {}, creating empty: {}",
+                    tableName, e.getMessage());
             Table empty = new Table(database, tableName, new ArrayList<>(), new HashMap<>(),
                     null, new HashMap<String, Sequence>());
             empty.formatVersion = CURRENT_FORMAT_VERSION;
@@ -4463,23 +4461,23 @@ class Table implements Serializable {
             long storedChecksum = ois.readLong();
             long computedChecksum = computeChecksumFromBytes(indexBytes);
             if (storedChecksum != computedChecksum) {
-                LOGGER.log(Level.WARNING,
-                        "Checksum mismatch for index ''{0}'' in table {1}, will rebuild",
-                        new Object[]{key, tableName});
+                LOGGER.warn(
+                        "Checksum mismatch for index ''{}'' in table {}, will rebuild",
+                        key, tableName);
                 return false;
             } else {
                 Index idx = (Index) new ObjectInputStream(
                         new ByteArrayInputStream(indexBytes)).readObject();
                 indexes.put(key, idx);
-                LOGGER.log(Level.FINE,
-                        "Restored index ''{0}'' from serialized data for table {1}",
-                        new Object[]{key, tableName});
+                LOGGER.debug(
+                        "Restored index ''{}'' from serialized data for table {}",
+                        key, tableName);
                 return true;
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING,
-                    "Failed to deserialize index in table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            LOGGER.warn(
+                    "Failed to deserialize index in table {}: {}",
+                    tableName, e.getMessage());
             return false;
         }
     }
@@ -4499,21 +4497,19 @@ class Table implements Serializable {
                     this.clusteredIndex = (BTreeClusteredIndex) new ObjectInputStream(
                             new ByteArrayInputStream(clusterBytes)).readObject();
                     clusteredRestoredOnLoad = true;
-                    LOGGER.log(Level.FINE,
-                            "Restored clustered index from serialized data for table {0}",
-                            tableName);
+                    LOGGER.debug(
+                            "Restored clustered index from serialized data for table {}", tableName);
                     return true;
                 } else {
-                    LOGGER.log(Level.WARNING,
-                            "Checksum mismatch for clustered index in table {0}, will rebuild",
-                            tableName);
+                    LOGGER.warn(
+                            "Checksum mismatch for clustered index in table {}, will rebuild", tableName);
                     return false;
                 }
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING,
-                    "Failed to deserialize clustered index for table {0}: {1}",
-                    new Object[]{tableName, e.getMessage()});
+            LOGGER.warn(
+                    "Failed to deserialize clustered index for table {}: {}",
+                    tableName, e.getMessage());
         }
         return false;
     }
@@ -4571,7 +4567,7 @@ class Table implements Serializable {
                     throw new IllegalArgumentException("Null key in clustered index column: " + clusteredIndexColumn);
                 }
                 if (clusteredKeyBlocked(key)) {
-                    LOGGER.log(Level.WARNING, "Duplicate clustered key detected: key '{0}' in column {1}", new Object[]{key, clusteredIndexColumn});
+                    LOGGER.warn("Duplicate clustered key detected: key '{}' in column {}", key, clusteredIndexColumn);
                     throw new IllegalStateException(ErrorMessages.DUPLICATE_KEY_PREFIX + key + "' in column " + clusteredIndexColumn);
                 }
                 if (getDeletedCount() > 0) {
@@ -4587,7 +4583,7 @@ class Table implements Serializable {
             if (token != null && token.tracking) {
                 event = new DualWriteCoordinator.InsertEvent(rowIndex, validatedRow, null);
             }
-            LOGGER.log(Level.FINE, "Restored row into table {0}: {1}", new Object[]{name, validatedRow});
+            LOGGER.debug("Restored row into table {}: {}", name, validatedRow);
         } finally {
             if (token != null) {
                 coordinator.endMutation(token, event);

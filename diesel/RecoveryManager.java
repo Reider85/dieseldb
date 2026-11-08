@@ -10,7 +10,8 @@ import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.management.Attribute;
 import javax.management.AttributeList;
 import javax.management.AttributeNotFoundException;
@@ -43,7 +44,7 @@ import javax.management.ReflectionException;
  */
 public final class RecoveryManager implements AutoCloseable, DynamicMBean {
 
-    private static final Logger LOGGER = Logger.getLogger(RecoveryManager.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(RecoveryManager.class);
 
     /** JMX object name prefix. */
     static final String OBJECT_NAME_PREFIX = "diesel:type=RecoveryManager";

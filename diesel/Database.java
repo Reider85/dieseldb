@@ -42,8 +42,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.IntStream;
 import diesel.concurrency.Savepoint;
 import diesel.observability.MetricsRegistry;
@@ -103,7 +103,7 @@ import diesel.security.UserStoreBackend;
  * @see QueryParser
  */
 public class Database {
-    private static final Logger LOGGER = Logger.getLogger(Database.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(Database.class);
     private final Map<String, Table> tables = new ConcurrentHashMap<>();
     private final QueryCache queryCache = new QueryCache();
     private final Map<UUID, Transaction> activeTransactions = new ConcurrentHashMap<>();
@@ -161,7 +161,7 @@ public class Database {
         try {
             createPageManager();
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
+            LOGGER.warn("Failed to create PageManager: " + e.getMessage(), e);
         }
         registerMetricsGauges();
     }
@@ -203,7 +203,7 @@ public class Database {
             initializeWAL(walConfigOverride);
             loadTablesFromDisk();
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to create PageManager: " + e.getMessage(), e);
+            LOGGER.warn("Failed to create PageManager: " + e.getMessage(), e);
         }
         registerMetricsGauges();
     }
@@ -297,7 +297,7 @@ public class Database {
             LOGGER.info("WAL subsystem enabled with policy=" + walConfig.getFsyncPolicy() + 
                 ", groupWindow=" + walConfig.getGroupWindowMs() + "ms, groupSize=" + walConfig.getGroupMaxSize());
         } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Failed to initialize WAL subsystem: " + e.getMessage(), e);
+            LOGGER.error("Failed to initialize WAL subsystem: " + e.getMessage(), e);
             throw e;
         }
     }
@@ -459,7 +459,7 @@ public class Database {
                 LOGGER.info("BufferPoolFlusher started with interval " + flushInterval + "ms");
             }
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to start BufferPoolFlusher: " + e.getMessage(), e);
+            LOGGER.error("Failed to start BufferPoolFlusher: " + e.getMessage(), e);
         }
     }
 
@@ -473,7 +473,7 @@ public class Database {
                 bufferPoolFlusher.stop();
                 LOGGER.info("BufferPoolFlusher stopped with final flush");
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "BufferPoolFlusher final flush failed: " + e.getMessage(), e);
+                LOGGER.warn("BufferPoolFlusher final flush failed: " + e.getMessage(), e);
             }
         }
     }
@@ -561,7 +561,7 @@ public class Database {
                            ", mode=" + mode.toLowerCase());
             }
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Failed to start CheckpointManager: " + e.getMessage(), e);
+            LOGGER.error("Failed to start CheckpointManager: " + e.getMessage(), e);
         }
     }
     
@@ -598,7 +598,7 @@ public class Database {
                 LOGGER.info("PageScrubber started with interval " + intervalDays + " days");
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Failed to start PageScrubber: " + e.getMessage(), e);
+            LOGGER.warn("Failed to start PageScrubber: " + e.getMessage(), e);
         }
     }
     
@@ -612,7 +612,7 @@ public class Database {
                 pageScrubber.stop();
                 LOGGER.info("PageScrubber stopped");
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to stop PageScrubber: " + e.getMessage(), e);
+                LOGGER.warn("Failed to stop PageScrubber: " + e.getMessage(), e);
             } finally {
                 pageScrubber = null;
             }
@@ -631,7 +631,7 @@ public class Database {
                 checkpointManager.stop();
                 LOGGER.info("CheckpointManager stopped with final checkpoint");
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "CheckpointManager final checkpoint failed: " + e.getMessage(), e);
+                LOGGER.warn("CheckpointManager final checkpoint failed: " + e.getMessage(), e);
                 throw e;
             }
         }
@@ -680,7 +680,7 @@ public class Database {
         try {
             writer.appendAsync(txid, op, before, after);
         } catch (RuntimeException e) {
-            LOGGER.log(Level.WARNING, "WAL DML append failed (statement continues): " + e.getMessage());
+            LOGGER.warn("WAL DML append failed (statement continues): " + e.getMessage());
         }
     }
 
@@ -799,12 +799,12 @@ public class Database {
                 newTable.getStorageType(), 
                 sequences, 
                 indexSchemas
-            );
+);
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.WARNING, "Failed to update catalog for table " + tableName, e);
-        }
-        
-        LOGGER.log(Level.INFO, "Created table {0} with primary key {1}", new Object[]{tableName, primaryKeyColumn});
+            LOGGER.warn("Failed to update catalog for table " + tableName, e);
+}
+          
+        LOGGER.info("Created table {} with primary key {}", tableName, primaryKeyColumn);
     }
 
     /**
@@ -890,7 +890,7 @@ public class Database {
      * query is recorded exactly once with its session identity.
      */
     Object executeQueryInternal(String query, UUID transactionId) {
-        LOGGER.log(Level.FINE, "Executing query: {0}", query);
+        LOGGER.debug("Executing query: {}", query);
         // prompt4 #58: hot standby serves reads only — reject writes before
         // parsing so the gate costs one volatile read on the read path.
         if (hotStandbyMode) {
@@ -1313,7 +1313,7 @@ public class Database {
 
     /** Audit-free prepared core shared by both overloads (prompt4 #33). */
     private Object executeParsedPreparedInternal(Query<?> parsedQuery, String concreteSql, UUID transactionId) {
-        LOGGER.log(Level.FINE, "Executing prepared query: {0}", concreteSql);
+        LOGGER.debug("Executing prepared query: {}", concreteSql);
         // prompt4 #58: same hot-standby gate as executeQueryInternal — the
         // prepared path parses a cached AST, so the text check is mandatory.
         if (hotStandbyMode) {
@@ -1739,13 +1739,12 @@ public class Database {
                 // WAL write failed: abort the commit (no durability = no commit)
                 final long txid = currentTransaction.getTxid();
                 final Exception finalE = e;
-                LOGGER.log(Level.SEVERE, () -> String.format("WAL commit failed for txid=%d, aborting transaction: %s", 
-                    txid, finalE.getMessage()));
+                LOGGER.error("WAL commit failed for txid={}, aborting transaction: {}", txid, finalE.getMessage());
                 // Rollback transaction state
                 try {
                     currentTransaction.getUndoLog().clear();
                 } catch (IOException ioException) {
-                    LOGGER.log(Level.WARNING, "Failed to cleanup undo log during abort", ioException);
+                    LOGGER.warn("Failed to cleanup undo log during abort", ioException);
                 }
                 currentTransaction.setInactive();
                 activeTransactions.remove(transactionId);
@@ -1761,12 +1760,12 @@ public class Database {
             if (!syncCoordinator.submitCommit(currentTransaction, commitLsn)) {
                 // Synchronous replication failed: abort the commit
                 final long txid = currentTransaction.getTxid();
-                LOGGER.log(Level.SEVERE, "Synchronous replication failed for txid={0}, aborting transaction", txid);
+                LOGGER.error("Synchronous replication failed for txid={}, aborting transaction", txid);
                 // Rollback transaction state
                 try {
                     currentTransaction.getUndoLog().clear();
                 } catch (IOException ioException) {
-                    LOGGER.log(Level.WARNING, "Failed to cleanup undo log during abort", ioException);
+                    LOGGER.warn("Failed to cleanup undo log during abort", ioException);
                 }
                 currentTransaction.setInactive();
                 activeTransactions.remove(transactionId);
@@ -1812,7 +1811,7 @@ public class Database {
         try {
             currentTransaction.getUndoLog().clear();
         } catch (java.io.IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to clean up undo log after COMMIT", e);
+            LOGGER.warn("Failed to clean up undo log after COMMIT", e);
         }
         
         // MVCC SSI: check for rw-conflicts at commit for SERIALIZABLE transactions
@@ -1920,7 +1919,7 @@ public class Database {
                 try {
                     asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.ABORT, null, null).get();
                 } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "WAL ABORT record failed (rollback continues): " + e.getMessage());
+                    LOGGER.warn("WAL ABORT record failed (rollback continues): " + e.getMessage());
                 }
             }
         }
@@ -1959,7 +1958,7 @@ public class Database {
                 byte[] payload = SavepointPayload.serialize(name, savepoint.getSequence());
                 asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.SAVEPOINT, null, payload).get();
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "WAL SAVEPOINT record failed: " + e.getMessage());
+                LOGGER.warn("WAL SAVEPOINT record failed: " + e.getMessage());
                 // Continue: savepoint created in memory and undo log
             }
         }
@@ -1983,7 +1982,7 @@ public class Database {
         try {
             int appliedCount = currentTransaction.getUndoLog()
                     .rollbackToMarker(this, name);
-            LOGGER.log(Level.INFO, "Applied " + appliedCount + " undo records to rollback to savepoint: " + name);
+            LOGGER.info("Applied " + appliedCount + " undo records to rollback to savepoint: " + name);
         } catch (IOException e) {
             throw new RuntimeException("Failed to rollback to savepoint: " + name, e);
         }
@@ -2002,7 +2001,7 @@ public class Database {
                     asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.RELEASE_SAVEPOINT, null, payload).get();
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
+                LOGGER.warn("WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
                 // Continue: savepoint stack updated in memory
             }
         }
@@ -2029,7 +2028,7 @@ public class Database {
                     asyncWALWriter.appendAsync(currentTransaction.getTxid(), WALOpcode.RELEASE_SAVEPOINT, null, payload).get();
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
+                LOGGER.warn("WAL RELEASE_SAVEPOINT records failed: " + e.getMessage());
                 // Continue: savepoint stack updated in memory
             }
         }
@@ -2250,10 +2249,10 @@ public class Database {
             // INPLACE never rewrites rows, so an index on the removed column
             // could not be rebuilt or kept valid - fall back to COPY (task 5).
             fallback = true;
-            LOGGER.log(Level.WARNING,
-                    "ALGORITHM=INPLACE not supported for indexed column {0} on {1};"
+            LOGGER.warn(
+                    "ALGORITHM=INPLACE not supported for indexed column {} on {};"
                     + " falling back to ALGORITHM=COPY",
-                    new Object[]{column, tableName});
+                    column, tableName);
         }
 
         if (query.getAlgorithm() == diesel.schema.AlterAlgorithm.COPY || fallback) {
@@ -2321,14 +2320,14 @@ public class Database {
                 try {
                     table.compact();
                 } catch (RuntimeException e) {
-                    LOGGER.log(Level.WARNING,
-                            "Background DROP COLUMN strip failed for table {0}; vacuum will retry",
-                            new Object[]{table.getName(), e});
+                    LOGGER.warn(
+                            "Background DROP COLUMN strip failed for table {}; vacuum will retry",
+                            table.getName(), e);
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            LOGGER.log(Level.FINE,
-                    "DROP COLUMN strip not scheduled (executor shut down): {0}", table.getName());
+            LOGGER.debug(
+                    "DROP COLUMN strip not scheduled (executor shut down): {}", table.getName());
         }
     }
 
@@ -2473,7 +2472,7 @@ public class Database {
             types.put(column, String.class);
         }
         createTable(name, columns, types, primaryKey);
-        LOGGER.log(Level.INFO, "Created system table {0}", name);
+        LOGGER.info("Created system table {}", name);
     }
 
     /**
@@ -3283,7 +3282,7 @@ public class Database {
                 tables.add(singleTable);
             }
         } catch (Exception e) {
-            LOGGER.log(Level.FINER, "Fallback table extraction failed", e);
+            LOGGER.trace("Fallback table extraction failed", e);
         }
     }
 
@@ -3562,7 +3561,7 @@ public class Database {
         try {
             catalog.dropTableSchema(tableName);
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.WARNING, "Failed to update catalog for dropped table " + tableName, e);
+            LOGGER.warn("Failed to update catalog for dropped table " + tableName, e);
         }
     }
 
@@ -3572,7 +3571,7 @@ public class Database {
      */
     public void loadCatalog() {
         // The catalog will be loaded when setCatalogPageManager is called
-        LOGGER.log(Level.INFO, "Catalog loaded from page 0");
+        LOGGER.info("Catalog loaded from page 0");
     }
 
     /**
@@ -3594,9 +3593,9 @@ public class Database {
         // Empty registry (e.g. tests that drop tables before close) is normal -
         // keep it at FINE so INFO only shows real saves.
         if (tables.isEmpty()) {
-            LOGGER.log(Level.FINE, "Saved 0 tables to disk (registry empty)");
+            LOGGER.debug("Saved 0 tables to disk (registry empty)");
         } else {
-            LOGGER.log(Level.INFO, "Saved {0} tables to disk", tables.size());
+            LOGGER.info("Saved {} tables to disk", tables.size());
         }
 
         // Wait for any in-flight persist to complete (e.g., from PersistFlusher daemon)
@@ -3689,16 +3688,16 @@ public class Database {
                     Table existing = tables.get(tableName);
                     if (existing != null && table.getSequences().isEmpty() && !existing.getSequences().isEmpty()) {
                         table.getSequences().putAll(existing.getSequences());
-                        LOGGER.log(Level.FINE, "Preserved {0} sequences from in-memory table {1}",
-                                new Object[]{existing.getSequences().size(), tableName});
+                        LOGGER.debug("Preserved {} sequences from in-memory table {}",
+                                existing.getSequences().size(), tableName);
                     }
                     tables.put(tableName, table);
-                    LOGGER.log(Level.INFO, "Loaded table {0} from disk with {1} rows",
-                            new Object[]{tableName, table.getLiveRowCount()});
+                    LOGGER.info("Loaded table {} from disk with {} rows",
+                            tableName, table.getLiveRowCount());
                 }
             } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Failed to load table {0} from disk, skipping: {1}",
-                        new Object[]{tableName, e.getMessage()});
+                LOGGER.warn("Failed to load table {} from disk, skipping: {}",
+                        tableName, e.getMessage());
             }
         }
         queryCache.invalidateAll();
@@ -3719,8 +3718,8 @@ public class Database {
             try {
                 Files.deleteIfExists(Path.of(dataDir, tableName + extension));
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to delete {0} file for table {1}: {2}",
-                        new Object[]{extension, tableName, e.getMessage()});
+                LOGGER.warn("Failed to delete {} file for table {}: {}",
+                        extension, tableName, e.getMessage());
             }
         }
     }
@@ -3838,7 +3837,7 @@ public class Database {
             alters.shutdownNow();
             try {
                 if (!alters.awaitTermination(5, TimeUnit.SECONDS)) {
-                    LOGGER.log(Level.WARNING, "ALTER COPY workers did not terminate within 5s");
+                    LOGGER.warn("ALTER COPY workers did not terminate within 5s");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -3868,7 +3867,7 @@ public class Database {
             try {
                 asyncWALWriter.close();
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to close WAL writer: " + e.getMessage(), e);
+                LOGGER.warn("Failed to close WAL writer: " + e.getMessage(), e);
             }
         }
         if (walScheduler != null) {
@@ -3920,14 +3919,14 @@ public class Database {
             try {
                 asyncWALWriter.close();
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to close WAL writer during crash simulation: " + e.getMessage(), e);
+                LOGGER.warn("Failed to close WAL writer during crash simulation: " + e.getMessage(), e);
             }
         }
         if (pageManager != null) {
             try {
                 pageManager.closeDiscardingDirty();
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to close page manager during crash simulation: " + e.getMessage(), e);
+                LOGGER.warn("Failed to close page manager during crash simulation: " + e.getMessage(), e);
             }
         }
     }

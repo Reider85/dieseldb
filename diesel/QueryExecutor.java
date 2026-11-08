@@ -6,7 +6,8 @@ import java.util.Set;
 import java.util.HashSet;
 import java.util.UUID;
 import java.util.concurrent.*;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.IntStream;
 
 /**
@@ -16,7 +17,7 @@ import java.util.stream.IntStream;
  * concurrently, reducing overall query latency for workloads with multiple independent operations.
  */
 public class QueryExecutor {
-    private static final Logger LOGGER = Logger.getLogger(QueryExecutor.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(QueryExecutor.class);
     private final ExecutorService executorService;
     private final Database database;
     

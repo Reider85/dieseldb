@@ -9,8 +9,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -43,7 +43,7 @@ import diesel.storage.avro.AvroRowStorage;
  * @see Query
  */
 class SelectQuery implements Query<List<Map<String, Object>>> {
-    private static final Logger LOGGER = Logger.getLogger(SelectQuery.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SelectQuery.class);
     private final List<String> columns;
     private Table derivedMainTable;
     private final List<QueryParser.AggregateFunction> aggregates;
@@ -1002,8 +1002,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             // Apply LIMIT/OFFSET
             Iterator<Map<String, Object>> limitedIterator = applyLimitOffsetStreaming(sortedIterator, combinedColumnTypes);
 
-            LOGGER.log(Level.FINE, "Selected streaming rows from table {0} with joins {1}, aggregates {2}, groupBy {3}, having={4}, limit={5}, offset={6}, orderBy={7}",
-                    new Object[]{mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
+            LOGGER.debug("Selected streaming rows from table {} with joins {}, aggregates {}, groupBy={}, having={}, limit={}, offset={}, orderBy={}",
+                    mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy);
             lastExecuteNanos += System.nanoTime() - execStart;
             QUERY_MEMORY.get().sample(0);
 
@@ -1161,8 +1161,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
 
             List<Map<String, Object>> result = applyLimitOffset(finalRows, combinedColumnTypes);
 
-            LOGGER.log(Level.FINE, "Selected {0} rows from table {1} with joins {2}, aggregates {3}, groupBy {4}, having={5}, limit={6}, offset={7}, orderBy={8}",
-                    new Object[]{result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy});
+            LOGGER.debug("Selected {} rows from table {} with joins {}, aggregates {}, groupBy={}, having={}, limit={}, offset={}, orderBy={}",
+                    result.size(), mainTableName, joins, aggregates, groupBy, havingConditions, limit, offset, orderBy);
             lastExecuteNanos += System.nanoTime() - execStart;
             QUERY_MEMORY.get().sample(result.size());
 
@@ -1404,8 +1404,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         long estimatedBytes = estimateHashTableSizeBytes(setup.buildRows(), setup.buildTable());
 
         if (preferNestedLoopByStatistics(setup.buildTable(), setup.probeTable())) {
-            LOGGER.log(Level.FINE, "Statistics prefer nested loop over hash join for join on {0} ({1} x {2} rows)",
-                    new Object[]{join.tableName, setup.buildTable().getStatistics().getRowCount(), setup.probeTable().getStatistics().getRowCount()});
+            LOGGER.debug("Statistics prefer nested loop over hash join for join on {} ({} x {} rows)",
+                    join.tableName, setup.buildTable().getStatistics().getRowCount(), setup.probeTable().getStatistics().getRowCount());
             ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
             return runBlockNestedLoopJoin(joinedRows, joinTable, ctx);
         }
@@ -1414,8 +1414,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
                 List<Map<String, Map<String, Object>>> result = runPartitionedHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
                         setup.buildColumnKey(), setup.probeColumnKey(), ctx);
-                LOGGER.log(Level.FINE, "Partitioned hash join completed: {0} rows produced for join on {1}",
-                        new Object[]{result.size(), join.tableName});
+                LOGGER.debug("Partitioned hash join completed: {} rows produced for join on {}",
+                        result.size(), join.tableName);
                 return result;
             } catch (IOException e) {
                 LOGGER.warning("Partitioned hash join failed, falling back to block nested loop join: " + e.getMessage());
@@ -1426,8 +1426,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         ctx.forJoin(join, setup.onlyEquality(), lastStream, setup.buildTableName(), setup.probeTableName());
         List<Map<String, Map<String, Object>>> result = runInMemoryHashJoin(setup.buildRows(), setup.buildTable(), setup.probeTable(),
                 setup.buildColumnKey(), setup.probeColumnKey(), ctx);
-        LOGGER.log(Level.FINE, "Hash join completed: {0} rows produced for join on {1}",
-                new Object[]{result.size(), join.tableName});
+        LOGGER.debug("Hash join completed: {} rows produced for join on {}",
+                result.size(), join.tableName);
         return result;
     }
 
@@ -1462,19 +1462,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                 // Check if we can use a specialized hash join for OR conditions
                 if (canUseSpecializedHashJoinForOrConditions(join)) {
                     useHashJoin = true;
-                    LOGGER.log(Level.INFO, "Using specialized hash join for OR conditions on {0}", join.tableName);
+                    LOGGER.info("Using specialized hash join for OR conditions on {}", join.tableName);
                 }
             }
 
             if (shouldReplanToNestedLoop() && useHashJoin) {
                 useHashJoin = false;
                 adaptiveState.markReplanned();
-                LOGGER.log(Level.INFO, "Adaptive replan: switching to nested loop for join on {0} (previous deviation={1})",
-                        new Object[]{join.tableName, String.format("%.2f", adaptiveState.maxDeviation)});
+                LOGGER.info("Adaptive replan: switching to nested loop for join on {} (previous deviation={})",
+                        join.tableName, String.format("%.2f", adaptiveState.maxDeviation));
             }
 
-            LOGGER.log(Level.FINE, "Join on {0}: useHashJoin={1}, hasOrConditions={2}", 
-                    new Object[]{join.tableName, useHashJoin, hasOrConditions});
+            LOGGER.debug("Join on {}: useHashJoin={}, hasOrConditions={}", 
+                    join.tableName, useHashJoin, hasOrConditions);
 
             ensureJoinColumnIndexes(ctx.tables, join);
 
@@ -1569,8 +1569,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                     finalRows.add(resultRow);
                 });
 
-        LOGGER.log(Level.FINE, "Applied GROUP BY with {0} columns, produced {1} groups",
-                new Object[]{groupBy.size(), finalRows.size()});
+        LOGGER.debug("Applied GROUP BY with {} columns, produced {} groups",
+                groupBy.size(), finalRows.size());
         return finalRows;
     }
 
@@ -1638,8 +1638,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
     private void applyOrderBy(List<Map<String, Object>> finalRows, boolean useStreaming) {
         if (!orderBy.isEmpty()) {
             finalRows.sort((row1, row2) -> compareRows(row1, row2, orderBy));
-            LOGGER.log(Level.FINE, "Applied ORDER BY with {0} clauses (streaming={1})",
-                    new Object[]{orderBy.size(), useStreaming && finalRows.size() > maxInMemoryRows});
+            LOGGER.debug("Applied ORDER BY with {} clauses (streaming={})",
+                    orderBy.size(), useStreaming && finalRows.size() > maxInMemoryRows);
         }
     }
 
@@ -1814,8 +1814,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         lastHashJoinBuildTimeMs = buildTimeMs;
         lastHashJoinProbeTimeMs = probeTimeMs;
         lastJoinUsedPartitioning = false;
-        LOGGER.log(Level.FINE, "Hash join metrics: hashTableSize={0}, buildTime={1} ms, probeTime={2} ms",
-                new Object[]{hashTable.size(), buildTimeMs, probeTimeMs});
+        LOGGER.debug("Hash join metrics: hashTableSize={}, buildTime={} ms, probeTime={} ms",
+                hashTable.size(), buildTimeMs, probeTimeMs);
         return newJoinedRows;
     }
 
@@ -1977,8 +1977,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
         lastHashJoinBuildTimeMs = buildTimeMs;
         lastHashJoinProbeTimeMs = probeTimeMs;
         lastJoinUsedPartitioning = true;
-        LOGGER.log(Level.INFO, "Partitioned hash join metrics: partitions={0}, hashTableSize={1}, buildTime={2} ms, probeTime={3} ms",
-                new Object[]{partitionCount, totalHashEntries, buildTimeMs, probeTimeMs});
+        LOGGER.info("Partitioned hash join metrics: partitions={}, hashTableSize={}, buildTime={} ms, probeTime={} ms",
+                partitionCount, totalHashEntries, buildTimeMs, probeTimeMs);
         return newJoinedRows;
     }
 
@@ -2104,8 +2104,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                 if (evaluateConditions(evalRow, ctx.join.onConditions, ctx.combinedColumnTypes, ctx.tables)) {
                     checkResultRowLimit(newJoinedRows.size(), ErrorMessages.STAGE_JOIN);
                     newJoinedRows.add(newRow);
-                    LOGGER.log(Level.FINE, "JOIN ON condition satisfied for {0} with conditions: {1}",
-                            new Object[]{ctx.join.tableName, ctx.join.onConditions});
+                    LOGGER.debug("JOIN ON condition satisfied for {} with conditions: {}",
+                            ctx.join.tableName, ctx.join.onConditions);
                 }
             } else {
                 throw new IllegalStateException("No valid ON condition specified for non-CROSS JOIN");
@@ -3033,8 +3033,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
             table.createBTreeIndex(unqualified);
             LOGGER.warning("Consider creating index on " + tableName + "." + unqualified + " for faster JOIN");
         } catch (RuntimeException e) {
-            LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
-                    new Object[]{tableName, unqualified, e.getMessage()});
+            LOGGER.debug("Skipped auto-creating index on {}.{}: {}",
+                    tableName, unqualified, e.getMessage());
         }
     }
 
@@ -3067,8 +3067,8 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                             table.createBTreeIndex(unqualified);
                             LOGGER.warning("Auto-created index on " + tableName + "." + unqualified + " for WHERE filtering");
                         } catch (RuntimeException e) {
-                            LOGGER.log(Level.FINE, "Skipped auto-creating index on {0}.{1}: {2}",
-                                    new Object[]{tableName, unqualified, e.getMessage()});
+                            LOGGER.debug("Skipped auto-creating index on {}.{}: {}",
+                                    tableName, unqualified, e.getMessage());
                         }
                     }
                 }
@@ -3173,7 +3173,7 @@ private Map<List<Object>, List<Map<String, Object>>> groupRowsByColumns(List<Map
                     table.getColumns(), combinedColumnTypes, null);
             return result.rows();
         } catch (Exception e) {
-            LOGGER.log(Level.FINE, "Avro pushdown failed, falling back to full scan", e);
+            LOGGER.debug("Avro pushdown failed, falling back to full scan", e);
             return table.getLiveRows();
         }
     }
@@ -3694,8 +3694,8 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         if (condition.operator == QueryParser.Operator.EQUALS && condition.value != null) {
             Object val = colType != null ? evaluator.convertConditionValue(condition.value, unqualifiedColumn, colType) : condition.value;
             List<Integer> rowIndices = index.search(val);
-            LOGGER.log(Level.FINE, "Used index on {0}.{1} for EQUALS condition, found {2} rows",
-                    new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
+            LOGGER.debug("Used index on {}.{} for EQUALS condition, found {} rows",
+                    tableName, unqualifiedColumn, rowIndices.size());
             return rowIndices;
         }
         if (condition.isInOperator() && condition.inValues != null) {
@@ -3704,8 +3704,8 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
                 Object val = colType != null ? evaluator.convertConditionValue(inValue, unqualifiedColumn, colType) : inValue;
                 rowIndices.addAll(index.search(val));
             }
-            LOGGER.log(Level.FINE, "Used index on {0}.{1} for IN condition, found {2} rows",
-                    new Object[]{tableName, unqualifiedColumn, rowIndices.size()});
+            LOGGER.debug("Used index on {}.{} for IN condition, found {} rows",
+                    tableName, unqualifiedColumn, rowIndices.size());
             return rowIndices;
         }
         if (index instanceof BTreeIndex bTreeIndex) {
@@ -3728,26 +3728,26 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         return switch (condition.operator) {
             case LESS_THAN -> {
                 List<Integer> r = bTreeIndex.rangeSearchHighParallel(condition.value);
-                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for < {2}, found {3} rows",
-                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                LOGGER.debug("Used BTree index on {}.{} for < {}, found {} rows",
+                        tableName, unqualifiedColumn, condition.value, r.size());
                 yield r;
             }
             case LESS_THAN_OR_EQUALS -> {
                 List<Integer> r = bTreeIndex.rangeSearchHighParallel(condition.value);
-                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for <= {2}, found {3} rows",
-                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                LOGGER.debug("Used BTree index on {}.{} for <= {}, found {} rows",
+                        tableName, unqualifiedColumn, condition.value, r.size());
                 yield r;
             }
             case GREATER_THAN -> {
                 List<Integer> r = bTreeIndex.rangeSearchLowParallel(condition.value);
-                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for > {2}, found {3} rows",
-                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                LOGGER.debug("Used BTree index on {}.{} for > {}, found {} rows",
+                        tableName, unqualifiedColumn, condition.value, r.size());
                 yield r;
             }
             case GREATER_THAN_OR_EQUALS -> {
                 List<Integer> r = bTreeIndex.rangeSearchLowParallel(condition.value);
-                LOGGER.log(Level.FINE, "Used BTree index on {0}.{1} for >= {2}, found {3} rows",
-                        new Object[]{tableName, unqualifiedColumn, condition.value, r.size()});
+                LOGGER.debug("Used BTree index on {}.{} for >= {}, found {} rows",
+                        tableName, unqualifiedColumn, condition.value, r.size());
                 yield r;
             }
             default -> null;
@@ -3978,7 +3978,7 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
     }
 
     private List<Object> executeSubQueryForIn(String key, Database database) {
-        LOGGER.log(Level.FINE, "Executing subquery: {0}", key);
+        LOGGER.debug("Executing subquery: {}", key);
         Object subQueryResult = database.executeQuery(key, transactionId);
         if (!(subQueryResult instanceof List<?> subList)) {
             throw new IllegalStateException("Subquery must return a list of rows");

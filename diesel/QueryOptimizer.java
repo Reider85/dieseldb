@@ -1,8 +1,8 @@
 package diesel;
 
 import java.util.*;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Adaptive query optimizer (Prompt 82). Monitors the ratio of estimated vs.
@@ -21,7 +21,7 @@ import java.util.logging.Level;
  */
 final class QueryOptimizer {
 
-    private static final Logger LOGGER = Logger.getLogger(QueryOptimizer.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(QueryOptimizer.class);
 
     /* ──────────────── configuration keys ──────────────── */
     static final String ENABLED_KEY        = "adaptive.enabled";
@@ -127,11 +127,9 @@ final class QueryOptimizer {
         if (!state.replanned && !state.hasSignificantDeviation()) {
             planCache.put(state.fingerprint, state.chosenAlgorithms);
         }
-        if (LOGGER.isLoggable(Level.FINE)) {
-            LOGGER.log(Level.FINE, "Adaptive optimizer: fingerprint={0} replanned={1} rows={2} devMax={3} cache={4}",
-                    new Object[]{state.fingerprint, state.replanned, totalRows,
-                            String.format("%.2f", state.maxDeviation), planCache.size()});
-        }
+        LOGGER.debug("Adaptive optimizer: fingerprint={} replanned={} rows={} devMax={} cache={}",
+                state.fingerprint, state.replanned, totalRows,
+                String.format("%.2f", state.maxDeviation), planCache.size());
     }
 
     /* ──────────────────────────────────────────────

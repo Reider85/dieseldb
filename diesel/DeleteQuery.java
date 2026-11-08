@@ -2,8 +2,8 @@ package diesel;
 
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -15,7 +15,7 @@ import java.util.stream.IntStream;
  * @see Query
  */
 class DeleteQuery implements Query<Void> {
-    private static final Logger LOGGER = Logger.getLogger(DeleteQuery.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DeleteQuery.class);
     private final List<QueryParser.Condition> conditions;
     private long lastAffectedRows;
 
@@ -55,7 +55,7 @@ class DeleteQuery implements Query<Void> {
      */
     @Override
     public Void execute(Table table) {
-        LOGGER.log(Level.FINE, "Executing DeleteQuery for table: {0}", table.getName());
+        LOGGER.debug("Executing DeleteQuery for table: {}", table.getName());
         validateInput();
         List<Map<String, Object>> rows = table.getRows();
         Map<String, Class<?>> columnTypes = table.getColumnTypes();
@@ -82,7 +82,7 @@ class DeleteQuery implements Query<Void> {
             table.endBulkUpdate();
             releaseLock(locks);
         }
-        LOGGER.log(Level.INFO, "Deleted {0} rows from table {1}", new Object[]{rowsToDelete.size(), table.getName()});
+        LOGGER.info("Deleted {} rows from table {}", rowsToDelete.size(), table.getName());
         lastAffectedRows = rowsToDelete.size();
         return null;
     }
@@ -159,7 +159,7 @@ class DeleteQuery implements Query<Void> {
             byte[] before = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, preImage);
             database.appendWalDml(txid, diesel.wal.WALOpcode.DELETE, before, null);
         } catch (java.io.IOException e) {
-            LOGGER.log(Level.WARNING, "WAL DELETE payload failed (statement continues): " + e.getMessage());
+            LOGGER.warn("WAL DELETE payload failed (statement continues): {}", e.getMessage());
         }
     }
 
@@ -245,12 +245,12 @@ class DeleteQuery implements Query<Void> {
         if (index instanceof HashIndex || index instanceof UniqueIndex) {
             Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column));
             rowsToDelete.addAll(index.search(conditionValue));
-            LOGGER.log(Level.INFO, "Using {0} index for column {1} with value {2}",
-                    new Object[]{index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue});
+            LOGGER.info("Using {} index for column {} with value {}", 
+                    index instanceof HashIndex ? "hash" : "unique", condition.column, conditionValue);
         } else if (index instanceof BTreeIndex btree) {
             Object conditionValue = EVAL.convertConditionValue(condition.value, condition.column, columnTypes.get(condition.column));
             rowsToDelete.addAll(btree.search(conditionValue));
-            LOGGER.log(Level.INFO, "Using B-tree index for column {0} with value {1}", new Object[]{condition.column, conditionValue});
+            LOGGER.info("Using B-tree index for column {} with value {}", condition.column, conditionValue);
         }
     }
 
@@ -270,8 +270,8 @@ class DeleteQuery implements Query<Void> {
             List<Integer> deduped = rowsToDelete.stream().distinct().sorted().collect(Collectors.toList());
             rowsToDelete.clear();
             rowsToDelete.addAll(deduped);
-            LOGGER.log(Level.INFO, "Using {0} index for IN query on column {1} with values {2}",
-                    new Object[]{indexTypeName(index),
+            LOGGER.info("Using {} index for IN query on column {} with values {}", 
+                    indexTypeName(index),
                             condition.column, condition.inValues});
         }
     }
@@ -335,7 +335,7 @@ class DeleteQuery implements Query<Void> {
             }
         }
         table.markDeleted(rowIndex);
-        LOGGER.log(Level.INFO, "Tombstoned row at index {0} from table {1}", new Object[]{rowIndex, table.getName()});
+        LOGGER.info("Tombstoned row at index {} from table {}", rowIndex, table.getName());
     }
 
     /**
@@ -347,7 +347,7 @@ class DeleteQuery implements Query<Void> {
         // Phase 4: Auto-compact if tombstone threshold reached
         int rawCount = table.getRawRowCount();
         if (rawCount > 0 && (double) table.getDeletedCount() / rawCount >= 0.3) {
-            LOGGER.log(Level.INFO, "Tombstone ratio >= 0.3, compacting table {0}", table.getName());
+            LOGGER.info("Tombstone ratio >= 0.3, compacting table {}", table.getName());
             table.compact();
         }
     }

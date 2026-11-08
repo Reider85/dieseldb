@@ -3,8 +3,8 @@ package diesel;
 import java.util.*;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.stream.Collectors;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.IntStream;
 
 /**
@@ -17,7 +17,7 @@ import java.util.stream.IntStream;
  * @see Query
  */
 class UpdateQuery implements Query<Void> {
-    private static final Logger LOGGER = Logger.getLogger(UpdateQuery.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(UpdateQuery.class);
 
     /**
      * Row count threshold above which bulk update mode (disable indices,
@@ -128,8 +128,7 @@ class UpdateQuery implements Query<Void> {
                 table.bumpVersion();
             }
             table.markStatsDirty();
-            LOGGER.log(Level.INFO, "Updated {0} rows in table {1}",
-                    new Object[]{affectedCount, table.getName()});
+            LOGGER.info("Updated {} rows in table {}", affectedCount, table.getName());
             lastAffectedRows = affectedCount;
             return null;
         } finally {
@@ -234,14 +233,14 @@ class UpdateQuery implements Query<Void> {
             byte[] afterImage = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, after);
             database.appendWalDml(txid, diesel.wal.WALOpcode.UPDATE, beforeImage, afterImage);
         } catch (java.io.IOException e) {
-            LOGGER.log(Level.WARNING, "WAL UPDATE payload failed (statement continues): " + e.getMessage());
+            LOGGER.warn("WAL UPDATE payload failed (statement continues): {}", e.getMessage());
         }
     }
 
     private void applyBulkUpdate(List<Map<String, Object>> rows, List<Integer> rowsToUpdate,
                                  Map<String, Class<?>> columnTypes, Table table) {
-        LOGGER.log(Level.INFO, "Bulk update mode: {0} rows >= threshold {1}",
-                new Object[]{rowsToUpdate.size(), BULK_UPDATE_THRESHOLD});
+        LOGGER.info("Bulk update mode: {} rows >= threshold {}", 
+                rowsToUpdate.size(), BULK_UPDATE_THRESHOLD);
         table.disableIndices();
         // o2 CSV-7: also open the storage bulk-update window so index-aware
         // backends defer their per-row work to one rebuild at the end. The
@@ -376,16 +375,16 @@ class UpdateQuery implements Query<Void> {
                     condition.value, condition.column,
                     columnTypes.get(condition.column));
             rowsToUpdate.addAll(index.search(conditionValue));
-            LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} = {2}",
-                    new Object[]{index instanceof HashIndex ? "hash" : "unique",
-                            condition.column, conditionValue});
+            LOGGER.info("Using {} index for UPDATE WHERE {} = {}", 
+                    index instanceof HashIndex ? "hash" : "unique",
+                    condition.column, conditionValue);
         } else if (index instanceof BTreeIndex btree) {
             Object conditionValue = EVAL.convertConditionValue(
                     condition.value, condition.column,
                     columnTypes.get(condition.column));
             rowsToUpdate.addAll(btree.search(conditionValue));
-            LOGGER.log(Level.INFO, "Using B-tree index for UPDATE WHERE {0} = {1}",
-                    new Object[]{condition.column, conditionValue});
+            LOGGER.info("Using B-tree index for UPDATE WHERE {} = {}", 
+                    condition.column, conditionValue);
         }
     }
 
@@ -403,10 +402,10 @@ class UpdateQuery implements Query<Void> {
             List<Integer> deduped = rowsToUpdate.stream().distinct().sorted().collect(Collectors.toList());
             rowsToUpdate.clear();
             rowsToUpdate.addAll(deduped);
-            LOGGER.log(Level.INFO, "Using {0} index for UPDATE WHERE {1} IN (...)",
-                    new Object[]{index instanceof HashIndex ? "hash"
+            LOGGER.info("Using {} index for UPDATE WHERE {} IN (...)", 
+                    index instanceof HashIndex ? "hash"
                             : index instanceof BTreeIndex ? "B-tree" : "unique",
-                            condition.column});
+                    condition.column);
         }
     }
 
@@ -424,8 +423,8 @@ class UpdateQuery implements Query<Void> {
                 default -> { /* GREATER_THAN/LESS_THAN need exclusive bounds — fall through to full scan */ }
             }
             if (!rowsToUpdate.isEmpty()) {
-                LOGGER.log(Level.INFO, "Using B-tree range index for UPDATE WHERE {0} {1} {2}",
-                        new Object[]{condition.column, condition.operator, conditionValue});
+                LOGGER.info("Using B-tree range index for UPDATE WHERE {} {} {}", 
+                        condition.column, condition.operator, conditionValue);
             }
         }
     }

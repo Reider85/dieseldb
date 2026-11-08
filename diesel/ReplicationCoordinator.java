@@ -14,8 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Binds physical streaming replication to the engine (prompt4 #58,
@@ -45,7 +45,7 @@ import java.util.logging.Logger;
  */
 public final class ReplicationCoordinator implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.getLogger(ReplicationCoordinator.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ReplicationCoordinator.class);
 
     /** Resume marker file inside the standby data directory. */
     static final String MARKER_FILE = "replication.lsn";
@@ -167,12 +167,11 @@ public final class ReplicationCoordinator implements AutoCloseable {
         long initialAppliedLsn;
         if (!hasTableFiles(dataDir)) {
             initialAppliedLsn = bootstrapStandby(host, port, dataDir);
-            LOGGER.log(Level.INFO, "Standby bootstrapped from base backup, resume LSN {0}",
-                    initialAppliedLsn);
+            LOGGER.info("Standby bootstrapped from base backup, resume LSN {}", initialAppliedLsn);
         } else {
             long marker = readMarker(dataDir);
             initialAppliedLsn = Math.max(0, marker);
-            LOGGER.log(Level.INFO, "Standby local data found, resume marker {0}", initialAppliedLsn);
+            LOGGER.info("Standby local data found, resume marker {}", initialAppliedLsn);
         }
 
         StreamingApplier applier = new StreamingApplier(new DatabasePitrSink(database));
@@ -239,8 +238,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
         try {
             return Long.parseLong(Files.readString(marker).trim());
         } catch (IOException | NumberFormatException e) {
-            LOGGER.log(Level.WARNING, "Unreadable replication marker {0}: {1}",
-                    new Object[]{marker, e.getMessage()});
+            LOGGER.warn("Unreadable replication marker {}: {}", marker, e.getMessage());
             return -1;
         }
     }
@@ -250,7 +248,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
             Files.createDirectories(dataDir);
             Files.writeString(dataDir.resolve(MARKER_FILE), Long.toString(lsn));
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Failed to write replication marker: {0}", e.getMessage());
+            LOGGER.warn("Failed to write replication marker: {}", e.getMessage());
         }
     }
 
@@ -288,7 +286,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
             long deadline = System.nanoTime() + 5_000_000_000L;
             while (database.getActiveTransactionCount() > 0) {
                 if (System.nanoTime() > deadline) {
-                    LOGGER.log(Level.WARNING,
+                    LOGGER.warn(
                             "Base backup: master not quiesced after 5s, proceeding anyway");
                     break;
                 }
@@ -300,7 +298,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
                 try {
                     pages.flush();
                 } catch (IOException e) {
-                    LOGGER.log(Level.FINE, "Page flush during backup failed: {0}", e.getMessage());
+                    LOGGER.debug("Page flush during backup failed: {}", e.getMessage());
                 }
             }
             WALManager wal = database.getWalManager();
@@ -356,7 +354,7 @@ public final class ReplicationCoordinator implements AutoCloseable {
                 entriesSincePersist = 0;
                 dirty = false;
             } catch (RuntimeException e) {
-                LOGGER.log(Level.WARNING, "Standby persist failed: {0}", e.getMessage());
+                LOGGER.warn("Standby persist failed: {}", e.getMessage());
             }
         }
     }

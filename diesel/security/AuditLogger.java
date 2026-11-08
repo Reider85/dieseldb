@@ -17,8 +17,8 @@ import java.util.Properties;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -43,7 +43,7 @@ import java.util.zip.GZIPOutputStream;
  */
 public final class AuditLogger {
 
-    private static final Logger LOGGER = Logger.getLogger(AuditLogger.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AuditLogger.class);
 
     public static final String ENABLED_KEY = "audit.enabled";
     public static final String RETENTION_DAYS_KEY = "audit.retention.days";
@@ -143,8 +143,7 @@ public final class AuditLogger {
         if (!queue.offer(entry)) {
             long dropped = droppedCount.incrementAndGet();
             if (dropped == 1 || dropped % 1000 == 0) {
-                LOGGER.log(Level.WARNING,
-                        "Audit queue full, dropped {0} record(s) so far", dropped);
+                LOGGER.warn("Audit queue full, dropped {} record(s) so far", dropped);
             }
         }
     }
@@ -230,7 +229,7 @@ public final class AuditLogger {
                 Thread.currentThread().interrupt();
                 break;
             } catch (RuntimeException e) {
-                LOGGER.log(Level.WARNING, "Audit consumer write failed", e);
+                LOGGER.warn("Audit consumer write failed", e);
                 batch.clear();
             }
         }
@@ -243,7 +242,7 @@ public final class AuditLogger {
             try {
                 appendBatchLocked(batch);
             } catch (RuntimeException e) {
-                LOGGER.log(Level.WARNING, "Audit final drain failed", e);
+                LOGGER.warn("Audit final drain failed", e);
             }
         }
     }
@@ -269,7 +268,7 @@ public final class AuditLogger {
         try {
             runRetention();
         } catch (RuntimeException e) {
-            LOGGER.log(Level.WARNING, "Audit retention failed", e);
+            LOGGER.warn("Audit retention failed", e);
         }
     }
 
@@ -293,7 +292,7 @@ public final class AuditLogger {
                     expired.add(record);
                 }
             } catch (RuntimeException e) {
-                LOGGER.log(Level.WARNING, "Audit row unreadable, skipping: {0}", row);
+                LOGGER.warn("Audit row unreadable, skipping: {}", row);
             }
         }
         if (expired.isEmpty()) {
@@ -305,8 +304,8 @@ public final class AuditLogger {
             ids.add(record.getId().toString());
         }
         backend.deleteRows(ids);
-        LOGGER.log(Level.INFO, "Audit retention archived {0} row(s) older than {1} day(s)",
-                new Object[]{expired.size(), retentionDays});
+        LOGGER.info("Audit retention archived {} row(s) older than {} day(s)",
+                expired.size(), retentionDays);
         return expired.size();
     }
 
@@ -371,8 +370,7 @@ public final class AuditLogger {
         try {
             return Integer.parseInt(raw.trim());
         } catch (NumberFormatException e) {
-            LOGGER.log(Level.WARNING, "Invalid {0} = \"{1}\", using default {2}",
-                    new Object[]{key, raw, defaultValue});
+            LOGGER.warn("Invalid {} = \"{}\", using default {}", key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -382,8 +380,7 @@ public final class AuditLogger {
         try {
             return Long.parseLong(raw.trim());
         } catch (NumberFormatException e) {
-            LOGGER.log(Level.WARNING, "Invalid {0} = \"{1}\", using default {2}",
-                    new Object[]{key, raw, defaultValue});
+            LOGGER.warn("Invalid {} = \"{}\", using default {}", key, raw, defaultValue);
             return defaultValue;
         }
     }
@@ -401,7 +398,7 @@ public final class AuditLogger {
                     }
                 }
             } catch (IOException e) {
-                LOGGER.log(Level.FINE, "config.properties unreadable, using defaults", e);
+                LOGGER.debug("config.properties unreadable, using defaults", e);
             }
             cachedProps = props;
         }

@@ -10,8 +10,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.function.Supplier;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 
 /**
@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
  */
 class BTreeIndex implements Index, Serializable {
     private static final long serialVersionUID = 1L;
-    private static final Logger LOGGER = Logger.getLogger(BTreeIndex.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(BTreeIndex.class);
     
     /**
      * Threshold for using parallel index scan (minimum estimated rows to trigger parallel processing).
@@ -114,7 +114,7 @@ class BTreeIndex implements Index, Serializable {
     @Override
     public void insert(Object key, int rowIndex) {
         if (key == null) {
-            LOGGER.log(Level.WARNING, "Attempted to insert null key");
+            LOGGER.warn("Attempted to insert null key");
             return;
         }
         Node r = root;
@@ -137,11 +137,11 @@ class BTreeIndex implements Index, Serializable {
         if (x.isLeaf) {
             if (i < x.keys.size() && compareKeys(key, x.keys.get(i)) == 0) {
                 x.rowIndices.get(i).add(rowIndex);
-                LOGGER.log(Level.FINE, "Appended rowIndex {0} to key {1} at position {2}", new Object[]{rowIndex, key, i});
+                LOGGER.debug("Appended rowIndex {} to key {} at position {}", rowIndex, key, i);
             } else {
                 x.keys.add(i, key);
                 x.rowIndices.add(i, new ArrayList<>(Collections.singletonList(rowIndex)));
-                LOGGER.log(Level.FINE, "Inserted new key {0} with rowIndex {1} at position {2}", new Object[]{key, rowIndex, i});
+                LOGGER.debug("Inserted new key {} with rowIndex {} at position {}", key, rowIndex, i);
             }
         } else {
             if (x.children.get(i).keys.size() == (2 * t - 1)) {
@@ -196,7 +196,7 @@ class BTreeIndex implements Index, Serializable {
     @Override
     public void remove(Object key, int rowIndex) {
         if (key == null) {
-            LOGGER.log(Level.WARNING, "Attempted to remove null key");
+            LOGGER.warn("Attempted to remove null key");
             return;
         }
         remove(root, key, rowIndex);
@@ -212,26 +212,26 @@ class BTreeIndex implements Index, Serializable {
             i++;
         }
 
-        LOGGER.log(Level.FINE, "Removing key={0}, rowIndex={1}, node keys={2}, isLeaf={3}, i={4}",
-                new Object[]{key, rowIndex, x.keys, x.isLeaf, i});
+        LOGGER.debug("Removing key={}, rowIndex={}, node keys={}, isLeaf={}, i={}",
+                key, rowIndex, x.keys, x.isLeaf, i);
 
         if (x.isLeaf) {
             for (int j = 0; j < x.keys.size(); j++) {
                 if (compareKeys(key, x.keys.get(j)) == 0) {
                     List<Integer> indices = x.rowIndices.get(j);
                     if (indices.remove(Integer.valueOf(rowIndex))) {
-                        LOGGER.log(Level.FINE, "Removed rowIndex {0} for key {1} at position {2}", new Object[]{rowIndex, key, j});
+                        LOGGER.debug("Removed rowIndex {} for key {} at position {}", rowIndex, key, j);
                         if (indices.isEmpty()) {
                             x.keys.remove(j);
                             x.rowIndices.remove(j);
-                            LOGGER.log(Level.FINE, "Removed key {0} at position {1} as no indices remain", new Object[]{key, j});
+                            LOGGER.debug("Removed key {} at position {} as no indices remain", key, j);
                         }
                         validateNode(x);
                         return;
                     }
                 }
             }
-            LOGGER.log(Level.FINE, "No matching key={0}, rowIndex={1} found in leaf node", new Object[]{key, rowIndex});
+            LOGGER.debug("No matching key={}, rowIndex={} found in leaf node", key, rowIndex);
             return;
         }
 
@@ -243,30 +243,30 @@ class BTreeIndex implements Index, Serializable {
         } else if (i < x.children.size()) {
             remove(x.children.get(i), key, rowIndex);
         } else {
-            LOGGER.log(Level.FINE, "No valid child for key={0}, i={1}, children size={2}",
-                    new Object[]{key, i, x.children.size()});
+            LOGGER.debug("No valid child for key={}, i={}, children size={}",
+                    key, i, x.children.size());
         }
     }
 
     private void validateNode(Node x) {
         if (x.isLeaf) {
             if (x.rowIndices == null || x.rowIndices.size() != x.keys.size()) {
-                LOGGER.log(Level.SEVERE, "Invalid leaf node: keys={0}, rowIndices size={1}, rowIndices={2}",
-                        new Object[]{x.keys, x.rowIndices != null ? x.rowIndices.size() : null, x.rowIndices});
+                LOGGER.error("Invalid leaf node: keys={}, rowIndices size={}, rowIndices={}",
+                        x.keys, x.rowIndices != null ? x.rowIndices.size() : null, x.rowIndices);
                 throw new IllegalStateException("Leaf node has mismatched keys and rowIndices");
             }
             for (int i = 0; i < x.rowIndices.size(); i++) {
                 List<Integer> indices = x.rowIndices.get(i);
                 if (indices == null || indices.isEmpty()) {
-                    LOGGER.log(Level.SEVERE, "Invalid leaf node: empty or null rowIndices for key {0} at position {1}, keys={2}, rowIndices={3}",
-                            new Object[]{x.keys.get(i), i, x.keys, x.rowIndices});
+                    LOGGER.error("Invalid leaf node: empty or null rowIndices for key {} at position {}, keys={}, rowIndices={}",
+                            x.keys.get(i), i, x.keys, x.rowIndices);
                     throw new IllegalStateException("Leaf node has empty or null rowIndices");
                 }
             }
         } else {
             if (x.children == null || x.children.size() != x.keys.size() + 1) {
-                LOGGER.log(Level.SEVERE, "Invalid internal node: keys={0}, keys size={1}, children={2}, children size={3}",
-                        new Object[]{x.keys, x.keys.size(), x.children, x.children != null ? x.children.size() : null});
+                LOGGER.error("Invalid internal node: keys={}, keys size={}, children={}, children size={}",
+                        x.keys, x.keys.size(), x.children, x.children != null ? x.children.size() : null);
                 throw new IllegalStateException("Internal node has mismatched keys and children");
             }
         }

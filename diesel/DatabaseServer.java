@@ -6,8 +6,8 @@ import java.security.GeneralSecurityException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import diesel.net.*;
 import diesel.net.messages.*;
@@ -35,7 +35,7 @@ import diesel.security.Session;
  * @see Database
  */
 public class DatabaseServer {
-    private static final Logger LOGGER = Logger.getLogger(DatabaseServer.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseServer.class);
 
     static {
         try {
@@ -46,9 +46,9 @@ public class DatabaseServer {
             if (val2 != null) queueCapacity = Integer.parseInt(val2.trim());
             String val3 = props.getProperty("server.backlog");
             if (val3 != null) backlog = Integer.parseInt(val3.trim());
-        } catch (Exception ignored) {
-            LOGGER.log(Level.WARNING, "Failed to load server config properties, using defaults", ignored);
-        }
+} catch (Exception ignored) {
+    LOGGER.warn("Failed to load server config properties, using defaults", ignored);
+}
     }
     private static final String CONFIG_FILE = ErrorMessages.CONFIG_FILE;
     private static int poolSize = 100;
@@ -179,13 +179,13 @@ public class DatabaseServer {
     }
 
     // Log configuration parameters
-    private static void logConfig(Properties config) {
-        LOGGER.log(Level.INFO, "Configuration parameters loaded from {0}:", CONFIG_FILE);
-        if (config.isEmpty()) {
-            LOGGER.log(Level.WARNING, "No configuration parameters found in {0}", CONFIG_FILE);
+private static void logConfig(Properties config) {
+    LOGGER.info("Configuration parameters loaded from {}:", CONFIG_FILE);
+if (config.isEmpty()) {
+    LOGGER.warn("No configuration parameters found in {}", CONFIG_FILE);
         } else {
-            config.forEach((key, value) ->
-                    LOGGER.log(Level.INFO, "Config: {0} = {1}", new Object[]{key, value}));
+config.forEach((key, value) ->
+        LOGGER.info("Config: {} = {}", key, value));
         }
     }
 
@@ -194,8 +194,8 @@ public class DatabaseServer {
         String isolationLevelStr = config.getProperty("transaction.isolation.level", "READ_UNCOMMITTED").toUpperCase();
         try {
             return IsolationLevel.valueOf(isolationLevelStr);
-        } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Invalid isolation level {0} in {1}, using default READ_UNCOMMITTED", new Object[]{isolationLevelStr, CONFIG_FILE});
+} catch (IllegalArgumentException e) {
+    LOGGER.error("Invalid isolation level {} in {}, using default READ_UNCOMMITTED", isolationLevelStr, CONFIG_FILE);
             return IsolationLevel.READ_UNCOMMITTED;
         }
     }
@@ -209,8 +209,8 @@ public class DatabaseServer {
                 throw new NumberFormatException("negative timeout");
             }
             return timeout;
-        } catch (NumberFormatException e) {
-            LOGGER.log(Level.SEVERE, "Invalid socket timeout {0} in {1}, using default 30000", new Object[]{timeoutStr, CONFIG_FILE});
+} catch (NumberFormatException e) {
+    LOGGER.error("Invalid socket timeout {} in {}, using default 30000", timeoutStr, CONFIG_FILE);
             return 30000;
         }
     }
@@ -231,7 +231,7 @@ public class DatabaseServer {
         logConfig(config);
         IsolationLevel isolationLevel = getIsolationLevel(config);
         int effectiveSocketTimeout = socketTimeout >= 0 ? socketTimeout : getSocketTimeout(config);
-        LOGGER.log(Level.INFO, "Server configured with transaction isolation level: {0}", isolationLevel);
+        LOGGER.info("Server configured with transaction isolation level: {}", isolationLevel);
 
         running = true;
         // prompt4 #58: a standby must receive the master's base backup BEFORE
@@ -245,14 +245,13 @@ public class DatabaseServer {
             try {
                 long bootstrapped = ReplicationCoordinator.bootstrapStandbyIfEmpty(
                         upstreamHost, upstreamPort, java.nio.file.Path.of(database.getDataDir()));
-                if (bootstrapped >= 0) {
-                    LOGGER.log(Level.INFO,
-                            "Standby base backup complete from {0}:{1}, resume LSN {2}",
-                            new Object[]{upstreamHost, upstreamPort, bootstrapped});
-                }
-            } catch (IOException e) {
-                startupError = e;
-                LOGGER.log(Level.SEVERE, "Standby base backup failed: {0}", e.getMessage());
+if (bootstrapped >= 0) {
+    LOGGER.info("Standby base backup complete from {}: {}, resume LSN {}", 
+            upstreamHost, upstreamPort, bootstrapped);
+}
+} catch (IOException e) {
+    startupError = e;
+    LOGGER.error("Standby base backup failed: {}", e.getMessage());
                 return;
             }
         }
@@ -270,19 +269,19 @@ public class DatabaseServer {
                 if ("master".equals(replicationRole)) {
                     int replPort = Integer.parseInt(config.getProperty("replication.port", "5433"));
                     replicationCoordinator = ReplicationCoordinator.startMaster(database, replPort);
-                    LOGGER.log(Level.INFO, "Replication master streaming on port {0}", replPort);
+                    LOGGER.info("Replication master streaming on port {}", replPort);
                 } else {
                     String upstreamHost = config.getProperty("replication.upstream.host", "localhost");
                     int upstreamPort = Integer.parseInt(
                             config.getProperty("replication.upstream.port", "5433"));
                     replicationCoordinator = ReplicationCoordinator.startStandby(
                             database, upstreamHost, upstreamPort);
-                    LOGGER.log(Level.INFO, "Replication standby streaming from {0}:{1} (hot standby)",
-                            new Object[]{upstreamHost, upstreamPort});
+LOGGER.info("Replication standby streaming from {}:{} (hot standby)", 
+        upstreamHost, upstreamPort);
                 }
-            } catch (IOException e) {
-                startupError = e;
-                LOGGER.log(Level.SEVERE, "Replication startup failed: {0}", e.getMessage());
+} catch (IOException e) {
+    startupError = e;
+    LOGGER.error("Replication startup failed: {}", e.getMessage());
                 return;
             }
         }
@@ -307,12 +306,11 @@ public class DatabaseServer {
                             ? database.getTenantStore().loadAllTenants()
                             : java.util.List.of();
             tlsHandler = TlsHandshakeHandler.fromConfig(config, sniTenants);
-            if (tlsHandler != null) {
-                LOGGER.log(Level.INFO, "TLS enabled on port {0} (whitelisted protocols/ciphers)", port);
-            }
-        } catch (IOException | GeneralSecurityException e) {
-            LOGGER.log(Level.SEVERE,
-                    "TLS is enabled but cannot be initialised, aborting startup: {0}", e.getMessage());
+if (tlsHandler != null) {
+    LOGGER.info("TLS enabled on port {} (whitelisted protocols/ciphers)", port);
+}
+} catch (IOException | GeneralSecurityException e) {
+    LOGGER.error("TLS is enabled but cannot be initialised, aborting startup: {}", e.getMessage());
             startupError = (e instanceof IOException) ? (IOException) e
                     : new IOException("TLS init failed: " + e.getMessage(), e);
             return;
@@ -341,7 +339,7 @@ public class DatabaseServer {
                 ss.bind(new java.net.InetSocketAddress(port), backlog);
                 serverSocket = ss;
             }
-            LOGGER.log(Level.INFO, "Database server started on port {0}", serverSocket.getLocalPort());
+            LOGGER.info("Database server started on port {}", serverSocket.getLocalPort());
 
             // Start legacy server if enabled
             if (legacyPort > 0) {
@@ -357,16 +355,14 @@ public class DatabaseServer {
                     new Thread(() -> {
                         try {
                             libpqServer.start();
-                        } catch (IOException e) {
-                            LOGGER.log(Level.WARNING, "libpq server failed to start on port {0}: {1}", 
-                                    new Object[]{libpqPort, e.getMessage()});
-                        }
+} catch (IOException e) {
+    LOGGER.warn("libpq server failed to start on port {}: {}", libpqPort, e.getMessage());
+}
                     }, "libpq-server").start();
-                    LOGGER.log(Level.INFO, "libpq server started on port {0} with auth method {1}", 
-                            new Object[]{libpqPort, libpqAuthMethod});
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Failed to start libpq server: {0}", e.getMessage());
-                }
+LOGGER.info("libpq server started on port {} with auth method {}", libpqPort, libpqAuthMethod);
+} catch (Exception e) {
+    LOGGER.warn("Failed to start libpq server: {}", e.getMessage());
+}
             }
 
             while (running) {
@@ -379,24 +375,24 @@ public class DatabaseServer {
                         // read in the worker thread (anti handshake-DoS).
                         clientSocket = tlsHandler.wrap(clientSocket);
                     }
-                    LOGGER.log(Level.INFO, "New client connected: {0}", clientSocket.getInetAddress());
+                    LOGGER.info("New client connected: {}", clientSocket.getInetAddress());
                     // Set socket timeout after accepting the connection (prompt 31)
                     try {
                         clientSocket.setSoTimeout(effectiveSocketTimeout);
-                    } catch (SocketException e) {
-                        LOGGER.log(Level.WARNING, "Failed to set socket timeout: {0}", e.getMessage());
-                    }
+} catch (SocketException e) {
+    LOGGER.warn("Failed to set socket timeout: {}", e.getMessage());
+}
                     handleClientConnection(clientSocket, executor, database, effectiveSocketTimeout, config);
-                } catch (IOException e) {
-                    if (running) {
-                        LOGGER.log(Level.SEVERE, "Error accepting client connection: {0}", e.getMessage());
-                    }
-                }
+} catch (IOException e) {
+    if (running) {
+        LOGGER.error("Error accepting client connection: {}", e.getMessage());
+    }
+}
             }
-        } catch (IOException e) {
-            startupError = e;
-            LOGGER.log(Level.SEVERE, "Failed to start server: {0}", e.getMessage());
-        }
+} catch (IOException e) {
+    startupError = e;
+    LOGGER.error("Failed to start server: {}", e.getMessage());
+}
     }
 
     /**
@@ -405,34 +401,34 @@ public class DatabaseServer {
     private void startLegacyServer(Database database, int effectiveSocketTimeout, Properties config) {
         Thread legacyThread = new Thread(() -> {
             try {
-                legacyServerSocket = new ServerSocket(legacyPort, backlog);
-                LOGGER.log(Level.WARNING, "Legacy protocol server started on deprecated port {0} - use v2 protocol instead", legacyPort);
+legacyServerSocket = new ServerSocket(legacyPort, backlog);
+LOGGER.warn("Legacy protocol server started on deprecated port {} - use v2 protocol instead", legacyPort);
 
                 while (running) {
                     try {
-                        Socket clientSocket = legacyServerSocket.accept();
-                        LOGGER.log(Level.WARNING, "New legacy client connected: {0}", clientSocket.getInetAddress());
+Socket clientSocket = legacyServerSocket.accept();
+LOGGER.warn("New legacy client connected: {}", clientSocket.getInetAddress());
                         
                         // Handle legacy connection in a separate thread
                         Thread legacyHandlerThread = new Thread(() -> {
                             try {
                                 LegacyProtocolAdapter adapter = new LegacyProtocolAdapter(database, config);
                                 adapter.handleConnection(clientSocket, effectiveSocketTimeout);
-                            } catch (IOException e) {
-                                LOGGER.log(Level.WARNING, "Legacy client handler error: {0}", e.getMessage());
-                            }
+} catch (IOException e) {
+    LOGGER.error("Client handler error: {}", e.getMessage());
+}
                         });
                         legacyHandlerThread.setDaemon(true);
                         legacyHandlerThread.start();
-                    } catch (IOException e) {
-                        if (running) {
-                            LOGGER.log(Level.SEVERE, "Error accepting legacy client connection: {0}", e.getMessage());
-                        }
-                    }
+} catch (IOException e) {
+    if (running) {
+        LOGGER.error("Error accepting legacy client connection: {}", e.getMessage());
+    }
+}
                 }
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Failed to start legacy server: {0}", e.getMessage());
-            }
+} catch (IOException e) {
+    LOGGER.error("Failed to start legacy server: {}", e.getMessage());
+}
         });
         legacyThread.setDaemon(true);
         legacyThread.start();
@@ -452,28 +448,28 @@ public class DatabaseServer {
             if (metrics != null) {
                 metrics.stop();
             }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error stopping metrics endpoint: {0}", e.getMessage());
-        }
+} catch (Exception e) {
+    LOGGER.warn("Error stopping metrics endpoint: {}", e.getMessage());
+}
 
         // Stop legacy server
         if (legacyServerSocket != null && !legacyServerSocket.isClosed()) {
             try {
-                legacyServerSocket.close();
-                LOGGER.log(Level.INFO, "Legacy server socket closed");
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Error closing legacy server socket: {0}", e.getMessage());
-            }
+legacyServerSocket.close();
+LOGGER.info("Legacy server socket closed");
+} catch (IOException e) {
+    LOGGER.error("Error closing legacy server socket: {}", e.getMessage());
+}
         }
         
         // Stop libpq server
         if (libpqServer != null && libpqServer.isRunning()) {
             try {
-                libpqServer.stop();
-                LOGGER.log(Level.INFO, "libpq server stopped");
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error stopping libpq server: {0}", e.getMessage());
-            }
+libpqServer.stop();
+LOGGER.info("libpq server stopped");
+} catch (Exception e) {
+    LOGGER.warn("Error stopping libpq server: {}", e.getMessage());
+}
         }
 
         // Stop replication endpoints (prompt4 #58): sender stops streaming to
@@ -482,47 +478,47 @@ public class DatabaseServer {
         ReplicationCoordinator repl = replicationCoordinator;
         if (repl != null) {
             try {
-                repl.close();
-                LOGGER.log(Level.INFO, "Replication endpoints stopped");
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error stopping replication: {0}", e.getMessage());
-            }
+repl.close();
+LOGGER.info("Replication endpoints stopped");
+} catch (Exception e) {
+    LOGGER.warn("Error stopping replication: {}", e.getMessage());
+}
         }
         
         database.getVacuumManager().stop();
         // Stop background checkpoint manager (prompt4 #21)
         try {
             database.stopCheckpointManager();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error stopping checkpoint manager: {0}", e.getMessage());
-        }
+} catch (Exception e) {
+    LOGGER.warn("Error stopping checkpoint manager: {}", e.getMessage());
+}
         // Stop background page scrubber (prompt4 #53)
         try {
             database.stopPageScrubber();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error stopping page scrubber: {0}", e.getMessage());
-        }
+} catch (Exception e) {
+    LOGGER.warn("Error stopping page scrubber: {}", e.getMessage());
+}
         // Stop background page flusher
         try {
             database.stopPageFlusher();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error stopping page flusher: {0}", e.getMessage());
-        }
+} catch (Exception e) {
+    LOGGER.warn("Error stopping page flusher: {}", e.getMessage());
+}
         try {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-            LOGGER.log(Level.INFO, "Database server stopped");
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Error stopping server: {0}", e.getMessage());
-        }
+            LOGGER.info("Database server stopped");
+} catch (IOException e) {
+    LOGGER.error("Error stopping server: {}", e.getMessage());
+}
         // Shut down the worker pool: give workers up to 2 seconds to finish, then force terminate
         executor.shutdown();
         try {
-            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
-                LOGGER.log(Level.WARNING, "Worker threads did not finish within 2 seconds, forcing shutdown");
-                executor.shutdownNow();
-            }
+if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+    LOGGER.warn("Worker threads did not finish within 2 seconds, forcing shutdown");
+    executor.shutdownNow();
+}
         } catch (InterruptedException e) {
             executor.shutdownNow();
             Thread.currentThread().interrupt();
@@ -647,22 +643,22 @@ public class DatabaseServer {
                 userId = authenticated.getUserId();
                 mustChange = authenticated.isMustChangePassword();
                 text = "Authenticated as " + authenticated.getUserName();
-                LOGGER.log(Level.INFO, "Client {0} authenticated as user {1}",
-                        new Object[]{clientSocket.getInetAddress(), authenticated.getUserName()});
-            } catch (AuthException e) {
-                text = e.getMessage();
-                LOGGER.log(Level.WARNING, "Authentication failure for user ''{0}'' from {1}: {2}",
-                        new Object[]{message.getUserName(), clientSocket.getInetAddress(), e.getMessage()});
-            }
+LOGGER.info("Client {} authenticated as user {}", 
+        clientSocket.getInetAddress(), authenticated.getUserName());
+} catch (AuthException e) {
+    text = e.getMessage();
+    LOGGER.warn("Authentication failure for user ''{}'' from {}: {}", 
+            message.getUserName(), clientSocket.getInetAddress(), e.getMessage());
+}
             try {
                 AuthResponseMessage response = new AuthResponseMessage(
                         success, token, userId, mustChange, text, message.getTransactionId());
                 MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.AUTH_RESPONSE);
                 WireProtocol.writeMessage(response, codec, out);
                 out.flush();
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to send auth response: {0}", e.getMessage());
-            }
+} catch (IOException e) {
+    LOGGER.warn("Failed to send auth response: {}", e.getMessage());
+}
         }
 
         /**
@@ -697,7 +693,7 @@ public class DatabaseServer {
          */
         private Message performHandshake(diesel.net.messages.CompressionHandshakeMessage handshake)
                 throws IOException {
-            LOGGER.log(Level.INFO, "Received compression handshake from client: {0}", handshake);
+            LOGGER.info("Received compression handshake from client: {}", handshake);
 
             // Create compression handler with negotiated settings and keep it
             // for every payload of this session (both directions).
@@ -732,16 +728,13 @@ public class DatabaseServer {
                     (double) totalCompressedBytes / totalOriginalBytes : 0.0;
             double avgTimeMs = totalCompressionTimeNanos / 1_000_000.0 / compressionCount;
             
-            LOGGER.log(Level.INFO,
-                    "Compression metrics [client={0}]: count={1}, totalOriginal={2} bytes, totalCompressed={3} bytes, ratio={4}, avgTime={5}ms",
-                    new Object[]{
-                        clientSocket.getInetAddress(),
-                        compressionCount,
-                        totalOriginalBytes,
-                        totalCompressedBytes,
-                        ratio,
-                        avgTimeMs
-                    });
+LOGGER.info("Compression metrics [client={}]: count={}, totalOriginal={} bytes, totalCompressed={} bytes, ratio={}, avgTime={}ms",
+        clientSocket.getInetAddress(),
+        compressionCount,
+        totalOriginalBytes,
+        totalCompressedBytes,
+        ratio,
+        avgTimeMs);
         }
 
         /**
@@ -753,20 +746,18 @@ public class DatabaseServer {
          */
         private void handleOutOfMemory(String query, OutOfMemoryError e) {
             long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-            LOGGER.log(Level.SEVERE, "OutOfMemoryError while executing query: {0}", query);
-            LOGGER.log(Level.SEVERE, "  Query context: rows produced={0}, peak memory used={1} bytes at {2} rows, heap used now={3} bytes, cause={4}",
-                    new Object[]{
-                            SelectQuery.getLastQueryRowCount(),
-                            SelectQuery.getLastQueryPeakMemoryBytes(),
-                            SelectQuery.getLastQueryRowsAtPeak(),
-                            usedBytes,
-                            String.valueOf(e.getMessage())
-                    });
+            LOGGER.error("OutOfMemoryError while executing query: {}", query);
+LOGGER.error("  Query context: rows produced={}, peak memory used={} bytes at {} rows, heap used now={} bytes, cause={}",
+        SelectQuery.getLastQueryRowCount(),
+        SelectQuery.getLastQueryPeakMemoryBytes(),
+        SelectQuery.getLastQueryRowsAtPeak(),
+        usedBytes,
+        String.valueOf(e.getMessage()));
             try {
                 sendSerializedResult("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
-            } catch (IOException io) {
-                LOGGER.log(Level.SEVERE, "Error sending OOM response to client: {0}", io.getMessage());
-            }
+} catch (IOException io) {
+    LOGGER.error("Error sending OOM response to client: {}", io.getMessage());
+}
         }
 
         @Override
@@ -782,9 +773,9 @@ public class DatabaseServer {
                 while (input != null && dispatchMessage(input)) {
                     input = readNextMessage(null);
                 }
-            } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Client handler error: {0}", e.getMessage());
-            } finally {
+} catch (IOException e) {
+    LOGGER.error("Client handler error: {}", e.getMessage());
+} finally {
                 cleanupClientResources();
             }
         }
@@ -806,20 +797,20 @@ public class DatabaseServer {
                 closeQuietly(out);
                 closeQuietly(in);
                 closeQuietly(clientSocket);
-                LOGGER.log(Level.INFO, "Client disconnected: {0}", clientSocket.getInetAddress());
+                LOGGER.info("Client disconnected: {}", clientSocket.getInetAddress());
                 logCompressionMetrics();
-            } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "Error closing client resources: {0}", e.getMessage());
-            }
+} catch (Exception e) {
+    LOGGER.error("Error closing client resources: {}", e.getMessage());
+}
         }
 
         private void closeQuietly(java.io.Closeable closeable) {
             if (closeable != null) {
                 try {
                     closeable.close();
-                } catch (IOException e) {
-                    LOGGER.log(Level.WARNING, "Error closing resource: {0}", e.getMessage());
-                }
+} catch (IOException e) {
+    LOGGER.warn("Error closing resource: {}", e.getMessage());
+}
             }
         }
 
@@ -850,17 +841,17 @@ public class DatabaseServer {
                             + " does not match frame header type " + frame.type());
                 }
                 return message;
-            } catch (EOFException e) {
-                LOGGER.log(Level.FINE, "Client {0} closed the connection", clientSocket.getInetAddress());
-                return null;
-            } catch (SocketTimeoutException e) {
-                LOGGER.log(Level.WARNING, "Socket timeout while waiting for query from client {0}: {1}",
-                        new Object[]{clientSocket.getInetAddress(), e.getMessage()});
-                return null;
-            } catch (InvalidMessageException e) {
-                LOGGER.log(Level.WARNING, "Invalid message from client {0}: {1}", 
-                        new Object[]{clientSocket.getInetAddress(), e.getMessage()});
-                return null;
+} catch (EOFException e) {
+    LOGGER.debug("Client {} closed the connection", clientSocket.getInetAddress());
+    return null;
+} catch (SocketTimeoutException e) {
+    LOGGER.warn("Socket timeout while waiting for query from client {}: {}", 
+            clientSocket.getInetAddress(), e.getMessage());
+    return null;
+} catch (InvalidMessageException e) {
+    LOGGER.warn("Invalid message from client {}: {}", 
+            clientSocket.getInetAddress(), e.getMessage());
+    return null;
             }
         }
 
@@ -966,11 +957,10 @@ public class DatabaseServer {
                 sendSerializedResult(result);
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(query, e);
-            } catch (Exception e) {
-                sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                        new Object[]{query, e.getMessage()});
-            }
+} catch (Exception e) {
+    sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
+    LOGGER.error("Query execution failed: {}, Error: {}", query, e.getMessage());
+}
         }
 
         /**
@@ -1063,9 +1053,8 @@ public class DatabaseServer {
                     compressed = candidate;
                     totalOriginalBytes += payload.length;
                     totalCompressedBytes += candidate.length;
-                    compressionCount++;
-                    LOGGER.log(Level.FINE, "Compressed query result: {0} -> {1} bytes",
-                            new Object[]{payload.length, compressed.length});
+compressionCount++;
+LOGGER.debug("Compressed query result: {} -> {} bytes", payload.length, compressed.length);
                 }
             }
             
@@ -1092,8 +1081,7 @@ public class DatabaseServer {
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
             
-            LOGGER.log(Level.INFO, "Prepared statement {0} from template: {1}",
-                    new Object[]{statementId, pm.getSqlTemplate()});
+            LOGGER.info("Prepared statement {} from template: {}", statementId, pm.getSqlTemplate());
         }
 
         /**
@@ -1117,8 +1105,7 @@ public class DatabaseServer {
                 handleOutOfMemory(ps.getSqlTemplate(), e);
             } catch (Exception e) {
                 sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                LOGGER.log(Level.SEVERE, "Prepared statement execution failed: {0}, Error: {1}",
-                        new Object[]{statementId, e.getMessage()});
+                LOGGER.error("Prepared statement execution failed: {}, Error: {}", statementId, e.getMessage());
             }
         }
 
@@ -1151,7 +1138,7 @@ public class DatabaseServer {
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
             
-            LOGGER.log(Level.INFO, "Closed prepared statement {0}", statementId);
+            LOGGER.info("Closed prepared statement {}", statementId);
         }
 
         /**
@@ -1170,14 +1157,12 @@ public class DatabaseServer {
                 String cursorId = cursor.getId().toString();
                 cursors.put(cursorId, cursor);
                 sendSerializedResult(cursorId);
-                LOGGER.log(Level.INFO, "Opened cursor {0} for query: {1} (fetchSize={2})",
-                        new Object[]{cursorId, ocm.getQuery(), fetchSize});
+                LOGGER.info("Opened cursor {} for query: {} (fetchSize={})", cursorId, ocm.getQuery(), fetchSize);
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory(ocm.getQuery(), e);
             } catch (Exception e) {
                 sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                LOGGER.log(Level.SEVERE, "Open cursor failed: {0}, Error: {1}",
-                        new Object[]{ocm.getQuery(), e.getMessage()});
+                LOGGER.error("Open cursor failed: {}, Error: {}", ocm.getQuery(), e.getMessage());
             }
         }
 
@@ -1199,14 +1184,12 @@ public class DatabaseServer {
             try {
                 List<Map<String, Object>> batch = cursor.fetch();
                 sendSerializedResult(batch);
-                LOGGER.log(Level.FINE, "Fetched {0} rows from cursor {1}",
-                        new Object[]{batch.size(), fcm.getCursorId()});
+LOGGER.debug("Fetched {} rows from cursor {}", batch.size(), fcm.getCursorId());
             } catch (OutOfMemoryError e) {
                 handleOutOfMemory("cursor fetch: " + fcm.getCursorId(), e);
             } catch (Exception e) {
                 sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-                LOGGER.log(Level.SEVERE, "Fetch cursor failed: {0}, Error: {1}",
-                        new Object[]{fcm.getCursorId(), e.getMessage()});
+                LOGGER.error("Fetch cursor failed: {}, Error: {}", fcm.getCursorId(), e.getMessage());
             }
         }
 
@@ -1228,7 +1211,7 @@ public class DatabaseServer {
             MessageCodec codec = MessageCodecRegistry.getCodec(MessageType.CLOSE_CURSOR_RESPONSE);
             WireProtocol.writeMessage(response, codec, out);
             out.flush();
-            LOGGER.log(Level.INFO, "Closed cursor {0}", closeCursorId);
+            LOGGER.info("Closed cursor {}", closeCursorId);
         }
     }
 
@@ -1246,7 +1229,7 @@ public class DatabaseServer {
             try {
                 localPort = Integer.parseInt(args[0]);
             } catch (NumberFormatException e) {
-                LOGGER.log(Level.SEVERE, "Invalid port {0}, using default {1}", new Object[]{args[0], localPort});
+                LOGGER.error("Invalid port {}, using default {}", args[0], localPort);
             }
         }
         String localDataDir = "data";
@@ -1261,14 +1244,14 @@ public class DatabaseServer {
         
         DatabaseServer server = new DatabaseServer(localPort, -1, legacyPort, database);
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOGGER.log(Level.INFO, "Shutdown hook triggered, stopping server gracefully");
+            LOGGER.info("Shutdown hook triggered, stopping server gracefully");
             try {
                 if (server.serverSocket != null && !server.serverSocket.isClosed()) {
                     server.serverSocket.close();
-                    LOGGER.log(Level.INFO, "ServerSocket closed, no longer accepting new connections");
+                    LOGGER.info("ServerSocket closed, no longer accepting new connections");
                 }
             } catch (IOException e) {
-                LOGGER.log(Level.SEVERE, "Error closing ServerSocket in shutdown hook: {0}", e.getMessage());
+                LOGGER.error("Error closing ServerSocket in shutdown hook: {}", e.getMessage());
             }
             server.stop();
         }, "shutdown-hook"));
@@ -1315,8 +1298,7 @@ public class DatabaseServer {
             activeConnections.decrementAndGet();
             MetricsRegistry.getInstance()
                     .counter(MetricsRegistry.CONNECTIONS_REJECTED).increment();
-            LOGGER.log(Level.SEVERE, "Rejected connection from {0}: worker pool full ({1})",
-                    new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+            LOGGER.error("Rejected connection from {}: worker pool full ({})", clientSocket.getInetAddress(), e.getMessage());
             closeClientSocket(clientSocket);
         }
     }
@@ -1328,7 +1310,7 @@ public class DatabaseServer {
         try {
             clientSocket.close();
         } catch (IOException io) {
-            LOGGER.log(Level.SEVERE, "Error closing rejected client socket: {0}", io.getMessage());
+            LOGGER.error("Error closing rejected client socket: {}", io.getMessage());
         }
     }
 }

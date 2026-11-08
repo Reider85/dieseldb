@@ -5,8 +5,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.BiFunction;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Executes an INSERT INTO statement: converts the raw values to the column
@@ -15,7 +15,7 @@ import java.util.logging.Level;
  * @see Query
  */
 class InsertQuery implements Query<Void> {
-    private static final Logger LOGGER = Logger.getLogger(InsertQuery.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(InsertQuery.class);
     /**
      * Row count above which a multi-row INSERT is executed inside a deferred
      * storage bulk-update window (o2 CSV-7), mirroring
@@ -58,7 +58,7 @@ class InsertQuery implements Query<Void> {
         this.columns = columns;
         this.values = values;
         this.valueRows = null;
-        LOGGER.log(Level.FINE, "Created InsertQuery with columns: {0}, values: {1}", new Object[]{columns, values});
+        LOGGER.debug("Created InsertQuery with columns: {}, values: {}", columns, values);
     }
 
     private InsertQuery(List<String> columns, List<Object> values, List<List<Object>> valueRows) {
@@ -149,8 +149,8 @@ class InsertQuery implements Query<Void> {
             }
         }
         lastAffectedRows = builtRows.size();
-        LOGGER.log(Level.FINE, "Inserted {0} rows into table {1}",
-                new Object[]{builtRows.size(), table.getName()});
+        LOGGER.debug("Inserted {} rows into table {}",
+                builtRows.size(), table.getName());
         return null;
     }
 
@@ -338,9 +338,9 @@ class InsertQuery implements Query<Void> {
             }
             
             lastAffectedRows = 1;
-            LOGGER.log(Level.FINE, "Inserted row into table {0}: {1}", new Object[]{table.getName(), row});
+            LOGGER.debug("Inserted row into table {}: {}", table.getName(), row);
         } catch (IllegalStateException e) {
-            LOGGER.log(Level.SEVERE, "Insert failed due to unique constraint violation: {0}", e.getMessage());
+            LOGGER.error("Insert failed due to unique constraint violation: {}", e.getMessage());
             throw new IllegalStateException("Insert failed: " + e.getMessage(), e);
         }
     }
@@ -359,7 +359,7 @@ class InsertQuery implements Query<Void> {
             byte[] after = diesel.wal.DmlPayload.serialize(table.getName(), rowIndex, row);
             database.appendWalDml(txid, diesel.wal.WALOpcode.INSERT, null, after);
         } catch (java.io.IOException e) {
-            LOGGER.log(Level.WARNING, "WAL INSERT payload failed (statement continues): " + e.getMessage());
+            LOGGER.warn("WAL INSERT payload failed (statement continues): {}", e.getMessage());
         }
     }
 }
