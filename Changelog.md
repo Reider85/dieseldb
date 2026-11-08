@@ -9,3 +9,5 @@
 3.4.5 Fix JUL to SLF4J compilation errors - replace warning/fine with warn/debug, fix Level.FINEST to trace
 
 3.4.6 Phase 2: Per-module logging switches with priority
+
+3.4.7 Migrate all legacy classes from JUL to SLF4J logging
