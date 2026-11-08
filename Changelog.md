@@ -995,3 +995,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.15 Resolve merge conflicts and format all commits from 3.4.2 onwards with proper version numbering
 3.4.16 Adopt formatted changelog from parallel 3.4.2-3.4.10 line
 3.4.17 Clean up pom.xml version
+
+3.4.18 GITHUB-1 fix CI: compile-gate fail-fast, fast-only push gate, corrected cache keys, auto-issue on failure
