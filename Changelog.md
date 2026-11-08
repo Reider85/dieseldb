@@ -11,3 +11,5 @@
 3.4.6 Phase 2: Per-module logging switches with priority
 
 3.4.7 Migrate all legacy classes from JUL to SLF4J logging
+
+3.4.8 TESTS-16,17: Add all-tests-all-storages target and remove unused Maven profiles
