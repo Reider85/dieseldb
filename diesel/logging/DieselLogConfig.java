@@ -173,7 +173,7 @@ public class DieselLogConfig {
         try {
             // Use reflection to access the package-private ConfigLoader
             Class<?> configLoaderClass = Class.forName("diesel.ConfigLoader");
-            java.lang.reflect.Method loadMethod = configLoaderClass.getMethod("load");
+            java.lang.reflect.Method loadMethod = configLoaderClass.getMethod("loadProperties");
             return (Properties) loadMethod.invoke(null);
         } catch (Exception e) {
             LOGGER.warn("Failed to load config from ConfigLoader, using empty properties", e);
