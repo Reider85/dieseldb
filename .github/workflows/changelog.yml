@@ -1,0 +1,179 @@
+name: Auto Update Changelog
+
+# Auto-update Changelog.md when a release is published
+# Triggered by release-on-push.yml workflow
+#
+# Design:
+# - Triggered ONLY when release-on-push creates a GitHub Release
+# - Parses commits since last tag using conventional commits format
+# - Adds new section to Changelog.md and commits back to main
+# - Uses [skip ci] to avoid recursive CI loops
+# - Handles version format: v3.4.4-build.762
+
+on:
+  workflow_run:
+    workflows: [Release on Push]
+    types: [completed]
+
+jobs:
+  update-changelog:
+    name: update-changelog
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Only run on successful release creation
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    permissions:
+      contents: write   # required to commit back to main
+    
+    steps:
+      # Checkout the repository with full history
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Set up JDK (needed for git operations)
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Get the release tag from the workflow run
+      - name: Get release tag
+        id: get-tag
+        run: |
+          # The tag format is v{version}-build.{run_number}
+          # We need to extract just the version part for changelog entry
+          TAG="${{ github.event.workflow_run.head_ref }}"
+          if [[ "$TAG" == refs/tags/* ]]; then
+            VERSION="${TAG#refs/tags/v}"
+            # Extract base version (remove -build.XXX)
+            BASE_VERSION="${VERSION%-build.*}"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Release tag: $TAG, Version: $VERSION, Base: $BASE_VERSION"
+          else
+            echo "ERROR: Expected tag format but got: $TAG"
+            exit 1
+          fi
+
+      # Generate changelog since last tag
+      - name: Generate changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v5
+        with:
+          # Find commits since last tag (excluding this release)
+          # The action automatically finds the previous tag
+          config: |
+            release-branch-pattern: main
+            # Handle our version format
+            version-template: |
+              ## [${version}] — ${date}
+              
+            categories:
+              - title: "Features"
+                labels: 
+                  - "feat"
+                # exclude_labels:
+                #   - "internal"
+              - title: "Performance"
+                labels: 
+                  - "perf"
+              - title: "Bug Fixes"
+                labels: 
+                  - "fix"
+              - title: "Documentation"
+                labels: 
+                  - "docs"
+              - title: "Refactoring"
+                labels: 
+                  - "refactor"
+              - title: "Chores"
+                labels: 
+                  - "chore"
+                exclude_labels:
+                  - "internal"
+          # Output to a file
+          output-file: changelog-entry.txt
+        env:
+          # GitHub token for accessing commit history
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Create changelog entry with proper formatting
+      - name: Format changelog entry
+        run: |
+          # Read the generated changelog
+          if [ -f "changelog-entry.txt" ]; then
+            ENTRY=$(cat changelog-entry.txt)
+            # Skip if empty
+            if [ -z "$ENTRY" ]; then
+              echo "No changelog content generated"
+              exit 0
+            fi
+            
+            # Create the new changelog section
+            BASE_VERSION="${{ steps.get-tag.outputs.base_version }}"
+            DATE=$(date '+%Y-%m-%d')
+            
+            # Format: ## [v3.4.4-build.762] — 2026-11-09
+            echo "## [${{ steps.get-tag.outputs.version }}] — ${DATE}" > new-changelog-section.txt
+            echo "" >> new-changelog-section.txt
+            echo "$ENTRY" >> new-changelog-section.txt
+            echo "" >> new-changelog-section.txt
+            
+            # Show what we're about to add
+            echo "=== New changelog section ==="
+            cat new-changelog-section.txt
+            echo "============================"
+            
+          else
+            echo "ERROR: changelog-entry.txt not found"
+            exit 1
+          fi
+
+      # Update Changelog.md with new section
+      - name: Update Changelog.md
+        run: |
+          # Create backup of current changelog
+          cp Changelog.md Changelog.md.backup
+          
+          # Create new changelog: new section + old changelog
+          cat new-changelog-section.txt Changelog.md > Changelog.new.md
+          
+          # Replace the original
+          mv Changelog.new.md Changelog.md
+          
+          echo "Changelog.md updated successfully"
+
+      # Commit the changelog update
+      - name: Commit changelog update
+        run: |
+          # Configure git
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          
+          # Check if there are changes
+          if git diff --quiet; then
+            echo "No changes to commit - changelog already up to date"
+            exit 0
+          fi
+          
+          # Add and commit
+          git add Changelog.md
+          git commit -m "docs: update changelog for ${{ steps.get-tag.outputs.version }} [skip ci]"
+          
+          # Push back to main
+          git push origin main
+          
+          echo "Changelog update committed and pushed successfully"
+
+      # Show final changelog for verification
+      - name: Show final changelog
+        run: |
+          echo "=== Final Changelog.md (first 50 lines) ==="
+          head -n 50 Changelog.md
+          echo "============================================="

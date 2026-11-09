@@ -14,6 +14,7 @@
 [![codecov](https://codecov.io/gh/Reider85/dieseldb/branch/main/graph/badge.svg)](https://codecov.io/gh/Reider85/dieseldb)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Reider85/dieseldb/pulls)
 [![Maven](https://img.shields.io/badge/Maven-3.9%2B-blue.svg)](https://maven.apache.org/)
+[![Last commit](https://img.shields.io/github/last-commit/Reider85/dieseldb)](https://github.com/Reider85/dieseldb/commits/main)
 
 > 🚀 **Status:** Production-like. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
 

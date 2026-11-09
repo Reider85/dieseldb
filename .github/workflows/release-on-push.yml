@@ -114,13 +114,36 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
-      - name: Create GitHub Release with JAR
-        if: steps.guard.outputs.exists == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          generate_release_notes: true   # GitHub builds notes from commits since previous tag
-          files: target/*.jar
-          fail_on_unmatched_files: true
-          draft: false
-          prerelease: false
+       - name: Generate javadoc link
+         id: javadoc-link
+         if: steps.guard.outputs.exists == 'false'
+         run: |
+           # Extract version from tag (remove v prefix)
+           VERSION="${{ steps.version.outputs.tag }}"
+           VERSION="${VERSION#v}"
+           
+           # Create javadoc link (GitHub Pages stores historical versions)
+           # Format: https://reider85.github.io/dieseldb/v3.4.4-build.762/
+           JAVADOC_URL="https://reider85.github.io/dieseldb/${VERSION}/"
+           echo "javadoc_url=$JAVADOC_URL" >> "$GITHUB_OUTPUT"
+           echo "Javadoc URL: $JAVADOC_URL"
+
+       - name: Create GitHub Release with JAR
+         if: steps.guard.outputs.exists == 'false'
+         uses: softprops/action-gh-release@v2
+         with:
+           tag_name: ${{ steps.version.outputs.tag }}
+           generate_release_notes: true   # GitHub builds notes from commits since previous tag
+           files: target/*.jar
+           fail_on_unmatched_files: true
+           draft: false
+           prerelease: false
+           # Add javadoc link to release notes
+           body: |
+             ## Javadoc Documentation
+            
+             API documentation for this release is available at: ${{ steps.javadoc-link.outputs.javadoc_url }}
+            
+             ---
+             
+             ${{ github.event.release.body }}

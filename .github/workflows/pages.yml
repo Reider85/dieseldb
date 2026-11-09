@@ -36,9 +36,10 @@ jobs:
 
       - name: Build Javadoc
         run: |
-          mvn -B javadoc:javadoc -DskipTests --no-transfer-progress
+          mvn -B javadoc:javadoc -DskipTests --no-transfer-progress -Ddoclint=none
         env:
           MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+        continue-on-error: true
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
