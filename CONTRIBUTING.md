@@ -48,7 +48,10 @@ make test        # fast test suite
 ## Quick Start for Contributors
 
 ### Finding Good First Issues
-Look for issues labeled with `good first issue` and `help wanted`. These are designed for new contributors and typically take 1-2 hours to complete.
+Look for issues labeled with `good first issue` and `help wanted`. These are designed for new contributors and typically take 1-2 hours to complete. You can find them by:
+- Searching for the `good first issue` label in [GitHub Issues](https://github.com/Reider85/dieseldb/issues)
+- Checking the "Good first issue" discussion category
+- Looking at the [Contributing Guide](CONTRIBUTING.md) priority areas below
 
 ### Setting Up Your Environment
 1. **Fork and Clone**: Fork the repository and clone your fork locally
@@ -70,19 +73,40 @@ make test-concurrency  # Concurrency tests
 1. Create a feature branch: `git checkout -b feature/my-improvement`
 2. Make your changes and add tests
 3. Run relevant test gates (see table above)
-4. Commit with descriptive message
+4. Commit with descriptive message using [Conventional Commits](#commit-message-format)
 5. Open a pull request against `main`
 
 ### Getting Help
-- Use [Discussions](https://github.com/Reider85/dieseldb/discussions) for questions
+- Use [Discussions](https://github.com/Reider85/dieseldb/discussions) for questions and ideas
 - Check existing issues and pull requests
 - Join the community discussions for guidance
+- Ask in the "Q&A" discussion category for technical questions
 
 On Windows PowerShell:
 
 ```powershell
 .\scripts\make.ps1 compile
 .\scripts\make.ps1 test
+```
+
+### Conventional Commits Cheat Sheet
+Use this format for your commit messages:
+
+```bash
+# Feature
+git commit -m "feat: add new SQL function"
+
+# Bug fix
+git commit -m "fix: resolve NullPointerException in query parser"
+
+# Documentation
+git commit -m "docs: update README with quick start guide"
+
+# Test
+git commit -m "test: add unit tests for new feature"
+
+# Chore
+git commit -m "chore: update dependencies"
 ```
 
 ## Workflow
@@ -147,12 +171,36 @@ This appends the changelog entry, syncs the `pom.xml` version, commits, and push
 
 ## Priority Areas
 
+### Good First Issues (Beginner-Friendly)
+These are perfect for new contributors and typically take 1-2 hours:
+
+- **Documentation**: Translate README sections to English (currently mixed RU/EN)
+- **Examples**: Add DieselDB + Spring Boot embedded mode example
+- **Examples**: Add DieselDB + JDBC + Hibernate integration example
+- **Error Handling**: Improve error message for unknown SQL keyword
+- **Performance**: Add JMH benchmark for SELECT WHERE on indexed column
+
+### Medium Priority Areas
 - **Critical:** complete stub implementations (LogicalDump, LogicalRestore, TablespaceRegistry, PhysicalBackup.triggerCheckpoint)
 - **High:** polish TupleVisibility semantics (RC vs RR vs S), add FOREIGN KEY / CHECK / NOT NULL / DEFAULT constraints
 - **Medium:** add JSON column type, CTE, window functions, UNION/INTERSECT/EXCEPT
 - **Performance:** parallel single-query execution, connection pooling, cost-based optimizer
 - **Ecosystem:** jOOQ support, Docker image, K8s operator, GUI client
 - **Governance:** `CODE_OF_CONDUCT.md`, `SECURITY.md`
+
+### How to Propose a Feature
+1. Create a new discussion in the "Ideas" category
+2. Describe the problem and your proposed solution
+3. Include alternatives you've considered
+4. Link to related issues or discussions
+5. Be prepared to discuss and refine your idea
+
+### How to Report a Bug
+1. Use the "Bug Report" issue template
+2. Include: DieselDB version, JDK version, OS, storage backend
+3. Provide the exact SQL to reproduce the issue
+4. Describe expected vs. actual behavior
+5. Include relevant logs or error messages
 
 ## Pull Request Process
 

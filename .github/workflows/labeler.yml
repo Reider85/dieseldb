@@ -1,22 +1,37 @@
-name: Label PRs
-
+name: Auto-labeler
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, labeled, unlabeled]
 
 jobs:
   label:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Label PR by paths
+      - name: Label PR
         uses: actions/labeler@v5
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           configuration-path: .github/labeler.yml
+          sync-labels: true
 
-      - name: Add welcome comment for good first issues
+      - name: Welcome new contributors
+        if: github.event.action == 'opened' && contains(github.event.pull_request.user.login, '[bot]') == false
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '👋 Welcome to DieselDB! Thanks for your contribution.\n\n📋 **Quick checklist:**\n- [ ] Ensure your PR description clearly explains the changes\n- [ ] Run the relevant test gates (`make test`, etc.)\n- [ ] Update documentation if needed\n- [ ] Check out our [Contributing Guide](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md)\n\n🎯 **Looking for good first issues?** Check out our [Good First Issues](https://github.com/Reider85/dieseldb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)\n\n💡 **Need help?** Join our [Discussions](https://github.com/Reider85/dieseldb/discussions) or ask in the PR comments.'
+            })
+
+      - name: Check for good-first-issue label
         if: contains(github.event.pull_request.labels.*.name, 'good first issue')
         uses: actions/github-script@v7
         with:
@@ -25,60 +40,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `👋 Welcome to DieselDB! Thank you for your contribution.
-
-This pull request is labeled as "good first issue" - great job getting started!
-
-## Next Steps
-1. Ensure your changes follow our [CONTRIBUTING.md](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md) guidelines
-2. Run the relevant test gates (`make test` for most changes)
-3. Add tests for any new functionality
-4. Update documentation if needed
-
-## Getting Help
-- If you have questions, join our [Discussions](https://github.com/Reider85/dieseldb/discussions)
-- Check existing issues and pull requests for similar patterns
-- We're here to help - feel free to ask questions in the PR comments
-
-## Community Resources
-- [Good First Issues Guide](https://github.com/Reider85/dieseldb/discussions/good-first-issue-welcome.md)
-- [Documentation](https://reider85.github.io/dieseldb/)
-- [Examples](https://github.com/Reider85/dieseldb/tree/main/examples)
-
-Thanks again for contributing to DieselDB! 🎉`
-            })
-
-      - name: Add welcome comment for help wanted
-        if: contains(github.event.pull_request.labels.*.name, 'help wanted')
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🤝 Thank you for helping with DieselDB!
-
-This pull request is labeled as "help wanted" - we appreciate your support in making this project better.
-
-## What We Need
-Your contribution helps address important needs in the DieselDB project. The maintainers will review your changes and provide feedback.
-
-## Getting Started
-- Review our [CONTRIBUTING.md](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md) guidelines
-- Run the test suite to ensure everything works: \`make test\`
-- Add tests for any new functionality
-- Update documentation as needed
-
-## Community Support
-- Join our [Discussions](https://github.com/Reider85/dieseldb/discussions) for questions
-- Check existing issues and pull requests for context
-- We're here to help - ask questions in the PR comments
-
-## Resources
-- [Documentation](https://reider85.github.io/dieseldb/)
-- [Examples](https://github.com/Reider85/dieseldb/tree/main/examples)
-- [Roadmap](https://github.com/Reider85/dieseldb/discussions/roadmap.md)
-
-Thank you for helping improve DieselDB! 🙏`
+              body: '🌟 **Great! This is marked as a "Good First Issue"**\n\n📚 **Resources for contributors:**\n- 📖 [Contributing Guide](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md)\n- 🎯 [Good First Issues](https://github.com/Reider85/dieseldb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)\n- 💬 [Discussions](https://github.com/Reider85/dieseldb/discussions)\n\n💡 **Tips for success:**\n1. Start by reading the [CONTRIBUTING.md](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md)\n2. Run `make compile` and `make test` to set up your environment\n3. Ask questions in the PR comments if you need help\n4. Don\'t hesitate to reach out if you get stuck\n\nHappy coding! 🚀'
             })

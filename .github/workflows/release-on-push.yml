@@ -138,12 +138,16 @@ jobs:
            fail_on_unmatched_files: true
            draft: false
            prerelease: false
-           # Add javadoc link to release notes
-           body: |
-             ## Javadoc Documentation
-            
-             API documentation for this release is available at: ${{ steps.javadoc-link.outputs.javadoc_url }}
-            
-             ---
+            # Add javadoc link to release notes
+            body: |
+              ## Javadoc Documentation
              
-             ${{ github.event.release.body }}
+              API documentation for this release is available at: ${{ steps.javadoc-link.outputs.javadoc_url }}
+             
+              ---
+              
+              ${{ github.event.release.body }}
+              
+              ---
+              
+              ⭐ **Star this repo if you find DieselDB useful** — it helps others discover it and supports the open-source community!

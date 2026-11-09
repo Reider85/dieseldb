@@ -1,152 +1,75 @@
 name: Question
 description: Ask a question about using DieselDB
 title: "[QUESTION] "
-labels: ["question", "triage"]
+labels: ["question"]
+assignees: []
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for your question about DieselDB! Please provide as much detail as possible to help us understand and assist you.
+        Thanks for your question! Please provide as much detail as possible to help us understand your needs.
 
-  - type: textarea
-    id: question
-    attributes:
-      label: Your Question
-      description: What would you like to know about DieselDB?
-      placeholder: I have a question about... and I need help understanding...
-    validations:
-      required: true
-
-  - type: textarea
-    id: context
-    attributes:
-      label: Context
-      description: Provide context about your situation and what you're trying to achieve
-      placeholder: |
-        I'm building a... application and I need to...
-        My current setup includes...
-        I've already tried...
-    validations:
-      required: true
+        **Note:** For general usage questions, consider posting in our [Discussions](https://github.com/Reider85/dieseldb/discussions) instead. This template is for specific technical questions that might need detailed investigation.
 
   - type: input
-    id: version
+    id: diesel-version
     attributes:
       label: DieselDB Version
-      description: The version of DieselDB you're using (check pom.xml)
-      placeholder: "3.3.99"
+      description: Version from pom.xml (e.g., 3.4.4)
+      placeholder: "3.4.4"
     validations:
       required: true
 
   - type: input
-    id: jdk
+    id: jdk-version
     attributes:
       label: JDK Version
-      description: The Java Development Kit version
+      description: Java version (e.g., 21.0.2)
       placeholder: "21.0.2"
     validations:
       required: true
 
-  - type: input
-    id: os
-    attributes:
-      label: Operating System
-      description: Your operating system and version
-      placeholder: "Ubuntu 22.04 LTS"
-    validations:
-      required: true
-
   - type: dropdown
-    id: storage
+    id: topic
     attributes:
-      label: Storage Backend
-      description: Which storage backend are you using?
+      label: Topic
+      description: What category does your question relate to?
       options:
-        - in_memory
-        - csv
-        - tsv
-        - jsonl
-        - avro
+        - Installation and Setup
+        - Configuration
+        - SQL Syntax and Queries
+        - Storage Backends
+        - Performance and Optimization
+        - Integration with Other Tools
+        - Development and Contributing
+        - Other
     validations:
       required: true
 
   - type: textarea
-    id: scenario
+    id: question-details
     attributes:
-      label: Scenario
-      description: Describe the specific scenario or use case
-      placeholder: |
-        I'm trying to...
-        My goal is to...
-        The expected behavior should be...
+      label: Question Details
+      description: Please provide a detailed description of your question
+      placeholder: "I'm trying to configure DieselDB to use multiple storage backends..."
     validations:
       required: true
 
   - type: textarea
-    id: attempts
+    id: attempted-solutions
     attributes:
-      label: What You've Tried
-      description: What steps have you already taken to solve this?
-      placeholder: |
-        I tried... but it didn't work because...
-        I looked at... but I'm not sure how to...
-        I attempted... but got stuck on...
+      label: Attempted Solutions
+      description: What have you tried so far to solve this?
+      placeholder: "I've tried modifying the config.properties file..."
     validations:
-      required: false
+      required: true
 
   - type: textarea
-    id: sql
+    id: additional-context
     attributes:
-      label: SQL Queries
-      description: Any SQL queries related to your question
-      placeholder: |
-        CREATE TABLE ...;
-        SELECT ...;
-        INSERT ...;
-    render: sql
-
-  - type: textarea
-    id: code
-    attributes:
-      label: Code Snippets
-      description: Any Java code or configuration related to your question
-      render: java
-      placeholder: |
-        // Java code example
-        Database db = new Database(...);
-        // Your code here...
-    validations:
-      required: false
-
-  - type: textarea
-    id: logs
-    attributes:
-      label: Logs or Error Messages
-      description: Any relevant logs or error messages
-      placeholder: |
-        ERROR: [error message here]
-        Stack trace...
-    validations:
-      required: false
-
-  - type: textarea
-    id: documentation
-    attributes:
-      label: Documentation References
-      description: Have you checked specific documentation sections?
-      placeholder: |
-        I checked the documentation at...
-        I read the section about...
-        The documentation mentions... but I'm not sure how to apply it...
-    validations:
-      required: false
-
-  - type: textarea
-    id: additional
-    attributes:
-      label: Additional Information
+      label: Additional Context
       description: Any other context that might be helpful
-      placeholder: Additional information that might help answer your question...
+      placeholder: "I'm running DieselDB on Windows 11 with 16GB RAM..."
     validations:
       required: false
 
@@ -156,9 +79,9 @@ body:
       label: Checklist
       description: Please confirm the following
       options:
-        - label: I have searched existing issues and discussions for similar questions
+        - label: I have searched existing issues and discussions to avoid duplicates
           required: true
-        - label: I have read the documentation
+        - label: I have provided a clear description of my question
           required: true
-        - label: I'm comfortable sharing my question publicly
-          required: true
+        - label: I am willing to help test a solution
+          required: false

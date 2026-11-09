@@ -1,25 +1,86 @@
-name: Stale Issues
-
+name: Stale Issues and PRs
 on:
   schedule:
-    - cron: '0 2 * * *'  # Run daily at 2 AM UTC
-  workflow_dispatch:
+    - cron: '0 0 * * *'  # Run daily at midnight UTC
+  workflow_dispatch:  # Allow manual triggering
 
 jobs:
   stale:
     runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+
     steps:
-      - uses: actions/stale@v9
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Mark stale issues and pull requests
+        uses: actions/stale@v9
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          stale-issue-message: 'This issue has been inactive for 60 days. To keep it open, please add a comment with activity. If no activity is shown within 7 days, it will be closed automatically.'
-          stale-issue-label: 'stale'
-          exempt-issue-labels: 'pinned,good first issue,help wanted,security,documentation,roadmap'
+          stale-issue-message: |
+            🤔 This issue has been inactive for 60 days.
+
+            This issue is now marked as stale and will be closed in 7 days if there is no further activity.
+
+            If this issue is still relevant, please leave a comment to keep it open. Thank you!
+
+          stale-pr-message: |
+            🤔 This pull request has been inactive for 60 days.
+
+            This pull request is now marked as stale and will be closed in 7 days if there is no further activity.
+
+            If this work is still in progress, please leave a comment to keep it open. Thank you!
+
           days-before-stale: 60
           days-before-close: 7
-          close-issue-message: 'This issue has been inactive for 67 days and will now be closed. If you believe this issue should still be open, please create a new issue with updated information.'
-          close-pr-message: 'This pull request has been inactive for 67 days and will now be closed. If you believe this pull request should still be open, please create a new pull request with updated information.'
-          exempt-pr-labels: 'pinned,security,documentation'
+          exempt-issue-labels: 'pinned,security,good first issue,enhancement,bug,documentation'
+          exempt-pr-labels: 'pinned,security,good first issue,enhancement,bug,documentation,wip'
+          exempt-milestones: true
+          stale-issue-label: 'stale'
           stale-pr-label: 'stale'
-          stale-pr-message: 'This pull request has been inactive for 60 days. To keep it open, please add a comment with activity. If no activity is shown within 7 days, it will be closed automatically.'
-          remove-stale-when-updated: true
+          close-issue-message: |
+            🚨 This issue has been inactive for 67 days and has been automatically closed.
+
+            If this issue is still relevant, please open a new issue with updated information. Thank you!
+
+          close-pr-message: |
+            🚨 This pull request has been inactive for 67 days and has been automatically closed.
+
+            If this work is still relevant, please open a new pull request with updated information. Thank you!
+
+      - name: Welcome new issues
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Add welcome comment to new issues (manual trigger only)
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 10,
+              sort: 'created',
+              direction: 'desc'
+            });
+
+            for (const issue of issues.data) {
+              if (issue.created_at.startsWith(new Date().toISOString().split('T')[0])) {
+                // Skip if already has comments
+                const comments = await github.rest.issues.listComments({
+                  issue_number: issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo
+                });
+                
+                if (comments.data.length === 0) {
+                  await github.rest.issues.createComment({
+                    issue_number: issue.number,
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    body: '👋 Welcome to DieselDB! Thanks for opening this issue.\n\n📋 **Quick reminders:**\n- Please use the appropriate issue template for bug reports, feature requests, or questions\n- For questions, consider using our [Discussions](https://github.com/Reider85/dieseldb/discussions) instead\n- Check out our [Contributing Guide](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md) if you want to contribute\n\n🎯 **Looking for good first issues?** Check out our [Good First Issues](https://github.com/Reider85/dieseldb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)\n\n💡 **Need help?** Join our [Discussions](https://github.com/Reider85/dieseldb/discussions) or ask in the issue comments.'
+                  });
+                }
+              }
+            }
