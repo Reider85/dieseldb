@@ -1,0 +1,106 @@
+# Dependabot configuration for DieselDB
+# Automatically checks for dependency updates and creates PRs
+
+version: 2
+updates:
+  # Enable version updates for Maven dependencies
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "Reider85"
+    assignees:
+      - "Reider85"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    reviewers:
+      - "Reider85"
+    assignees:
+      - "Reider85"
+    # Allow major version updates for critical dependencies
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    # Ignore specific dependencies if needed
+    ignore:
+      # Ignore development-only dependencies
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+        versions:
+          - "*-SNAPSHOT"
+    # Labels for PRs
+    labels:
+      - "dependencies"
+      - "automated"
+      - "maintenance"
+
+  # Enable version updates for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    reviewers:
+      - "Reider85"
+    assignees:
+      - "Reider85"
+    labels:
+      - "ci"
+      - "automated"
+      - "maintenance"
+
+  # Enable version updates for Maven plugins
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "plugins"
+      include: "scope"
+    reviewers:
+      - "Reider85"
+    assignees:
+      - "Reider85"
+    labels:
+      - "plugins"
+      - "automated"
+      - "maintenance"
+
+  # Security-focused updates (higher priority)
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "02:00"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "security"
+      include: "scope"
+    reviewers:
+      - "Reider85"
+    assignees:
+      - "Reider85"
+    labels:
+      - "security"
+      - "automated"
+      - "critical"
+    # Only security updates
+    allow:
+      - dependency-type: "direct"
+        update-types: ["security-update"]
+      - dependency-type: "indirect"
+        update-types: ["security-update"]

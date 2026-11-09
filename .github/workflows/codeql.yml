@@ -1,0 +1,152 @@
+name: Security Scanning
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - 'diesel/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - 'diesel/**'
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM UTC
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run CodeQL analysis
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          languages: ${{ matrix.language }}
+        
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build with Maven
+        run: |
+          mvn -B --no-transfer-progress -Dstyle.color=never compile -DskipTests
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/perform-analysis@v3
+        with:
+          category: "language"
+          language: ${{ matrix.language }}
+          auto-build: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: codeql-repos/*/codeql-analysis*.sarif
+          category: security
+
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - name: Run dependency-check
+        run: |
+          # Install dependency-check
+          wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.2.1/dependency-check-8.2.1-release.zip
+          unzip -q dependency-check-8.2.1-release.zip
+          mv dependency-check-8.2.1/* /usr/local/bin/
+          rmdir dependency-check-8.2.1
+          rm dependency-check-8.2.1-release.zip
+          
+          # Run scan
+          dependency-check --project "DieselDB" --scan ./diesel --format JSON --output ./dependency-check-report.json
+
+      - name: Upload dependency scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-scan-results
+          path: |
+            dependency-check-report.json
+            dependency-check-report.html
+          retention-days: 30
+
+  vulnerability-alert:
+    name: Vulnerability Alert
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [security-scan, dependency-scan]
+    permissions:
+      issues: write
+    
+    steps:
+      - name: Check for vulnerabilities
+        run: |
+          # Check if any high/critical vulnerabilities were found
+          if [ -f "dependency-check-report.json" ]; then
+            HIGH_COUNT=$(jq '.dependencies[] | select(.vulnerabilities[] | select(.severity == "High" or .severity == "Critical")) | length' dependency-check-report.json 2>/dev/null || echo "0")
+            if [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "⚠️  Found $HIGH_COUNT high/critical vulnerabilities"
+              echo "Creating GitHub issue..."
+              
+              # Create issue body
+              cat > vulnerability-issue.md << EOF
+## Security Vulnerability Alert
+
+The dependency scan detected **$HIGH_COUNT** high or critical vulnerabilities that require attention.
+
+### Next Steps
+1. Review the detailed scan results in the artifacts
+2. Update dependencies to resolve vulnerabilities
+3. Re-run the security scan after fixes
+
+### Artifacts
+- [Dependency Check Report](dependency-check-report.html)
+- [CodeQL Analysis Results](codeql-repos/*/codeql-analysis*.sarif)
+
+### Automatic Detection
+This issue was automatically created by GitHub Actions when high/critical vulnerabilities were detected.
+EOF
+
+              # Create issue
+              gh issue create \
+                --title "Security Vulnerability Alert - $HIGH_COUNT High/Critical Issues" \
+                --body-file vulnerability-issue.md \
+                --label "security,vulnerability,automated"
+            else
+              echo "✅ No high/critical vulnerabilities detected"
+            fi
+          fi

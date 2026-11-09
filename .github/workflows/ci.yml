@@ -114,6 +114,22 @@ jobs:
         shell: bash
         run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast 2>&1 | tee test.log
 
+      - name: Generate coverage report
+        if: success()
+        run: |
+          echo "Generating JaCoCo coverage report..."
+          mvn jacoco:report -q
+          echo "✅ Coverage report generated at target/site/jacoco/index.html"
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: success()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/site/jacoco/jacoco.xml
+          flags: ci-fast
+          name: ci-fast-coverage
+
       - name: Print test failure diagnosis (last 50 lines)
         if: failure()
         run: |
@@ -140,6 +156,16 @@ jobs:
           echo "## Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Profile: fast" >> $GITHUB_STEP_SUMMARY
           echo "- Tests run: ${{ github.run_attempt }} attempt(s)" >> $GITHUB_STEP_SUMMARY
+          echo "- Coverage: Available in artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: CodeQL scanning available" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload test results to PR checks
+        uses: dorny/test-reporter@v1
+        if: success() || failure()
+        with:
+          name: Test Results
+          path: target/surefire-reports/
+          reporter: java-junit
           
       - name: Upload test reports
         if: failure()

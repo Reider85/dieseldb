@@ -1,0 +1,196 @@
+name: Enhanced Nightly Tests
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Daily at 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Profile to run'
+        type: choice
+        options: [all, perf, large, mutation, stress]
+        default: all
+
+jobs:
+  # ──────── Nightly Performance Regression ────────
+  nightly-perf:
+    name: Performance Regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event.inputs.profile == 'perf' || github.event.inputs.profile == 'all'
+    
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
+
+      - name: Run performance tests
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never test -P perf
+
+      - name: Upload performance history
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-history
+          path: |
+            analytics/performance_history.csv
+            analytics/regression_baseline.md
+          retention-days: 30
+
+  # ──────── Nightly Mutation Testing ────────
+  nightly-mutation:
+    name: Mutation Testing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    if: github.event_name == 'schedule' || github.event.inputs.profile == 'mutation' || github.event.inputs.profile == 'all'
+    
+    env:
+      MAVEN_OPTS: -Xmx4g -XX:+UseG1GC
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
+
+      - name: Run mutation testing
+        run: |
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never pitest:mutationCoverage -P mutation
+
+      - name: Upload mutation results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-results
+          path: |
+            target/pit-reports/
+            target/site/pit/
+          retention-days: 30
+
+  # ──────── Nightly Stress Testing ────────
+  nightly-stress:
+    name: Stress Testing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    if: github.event_name == 'schedule' || github.event.inputs.profile == 'stress' || github.event.inputs.profile == 'all'
+    
+    env:
+      MAVEN_OPTS: -Xmx4g -XX:+UseG1GC
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
+
+      - name: Run stress tests (3x repeats)
+        run: |
+          echo "=== Stress Testing - Run 1/3 ==="
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never test -P large || exit 1
+          
+          echo "=== Stress Testing - Run 2/3 ==="
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never test -P large || exit 1
+          
+          echo "=== Stress Testing - Run 3/3 ==="
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never test -P large || exit 1
+
+          echo "✅ All 3 stress test runs completed successfully"
+
+      - name: Upload stress test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-test-results
+          path: target/surefire-reports/
+          retention-days: 30
+
+  # ──────── Nightly Storage Matrix ────────
+  nightly-storage:
+    name: Storage Matrix
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name == 'schedule' || github.event.inputs.profile == 'all'
+    
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [csv, tsv, jsonl, avro]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
+
+      - name: Run storage tests
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never test -P storage-${{ matrix.storage }}
+
+      - name: Upload storage test reports
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: storage-${{ matrix.storage }}-reports
+          path: target/surefire-reports/
+          retention-days: 30
+
+  # ──────── Nightly Test Result Visibility ────────
+  nightly-visibility:
+    name: Test Result Visibility
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [nightly-perf, nightly-mutation, nightly-stress, nightly-storage]
+    
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "# Nightly Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Type | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Performance Regression | ${{ needs.nightly-perf.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mutation Testing | ${{ needs.nightly-mutation.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stress Testing | ${{ needs.nightly-stress.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Storage Matrix | ${{ needs.nightly-storage.result }} |" >> $GITHUB_STEP_SUMMARY
+          "" >> $GITHUB_STEP_SUMMARY
+          echo "## Artifacts Available" >> $GITHUB_STEP_SUMMARY
+          echo "- Performance history: `perf-history`" >> $GITHUB_STEP_SUMMARY
+          echo "- Mutation results: `mutation-results`" >> $GITHUB_STEP_SUMMARY
+          echo "- Stress test results: `stress-test-results`" >> $GITHUB_STEP_SUMMARY
+          echo "- Storage test results: `storage-*-reports`" >> $GITHUB_STEP_SUMMARY
+          "" >> $GITHUB_STEP_SUMMARY
+          echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.nightly-perf.result }}" = "failure" ]; then
+            echo "- ⚠️ Performance regression detected - review performance history" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.nightly-mutation.result }}" = "failure" ]; then
+            echo "- ⚠️ Mutation testing failed - review mutation results" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.nightly-stress.result }}" = "failure" ]; then
+            echo "- ⚠️ Stress testing failed - review stress test results" >> $GITHUB_STEP_SUMMARY
+          fi
