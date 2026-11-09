@@ -1,0 +1,25 @@
+name: Stale Issues
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Run daily at 2 AM UTC
+  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-issue-message: 'This issue has been inactive for 60 days. To keep it open, please add a comment with activity. If no activity is shown within 7 days, it will be closed automatically.'
+          stale-issue-label: 'stale'
+          exempt-issue-labels: 'pinned,good first issue,help wanted,security,documentation,roadmap'
+          days-before-stale: 60
+          days-before-close: 7
+          close-issue-message: 'This issue has been inactive for 67 days and will now be closed. If you believe this issue should still be open, please create a new issue with updated information.'
+          close-pr-message: 'This pull request has been inactive for 67 days and will now be closed. If you believe this pull request should still be open, please create a new pull request with updated information.'
+          exempt-pr-labels: 'pinned,security,documentation'
+          stale-pr-label: 'stale'
+          stale-pr-message: 'This pull request has been inactive for 60 days. To keep it open, please add a comment with activity. If no activity is shown within 7 days, it will be closed automatically.'
+          remove-stale-when-updated: true

@@ -1,0 +1,59 @@
+name: Issue Configuration
+description: Configuration for issue templates - redirects to Discussions for questions
+title: "Issue Configuration"
+labels: ["configuration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Welcome to DieselDB Issue Templates!
+
+        This repository uses structured issue templates to help us collect detailed information about bugs, feature requests, and questions.
+
+        ## Quick Links
+
+        - **📚 Documentation**: [DieselDB Docs](https://reider85.github.io/dieseldb/)
+        - **💬 Community Discussions**: [Ask questions and share ideas](https://github.com/Reider85/dieseldb/discussions)
+        - **🐛 Bug Reports**: [Report bugs and issues](https://github.com/Reider85/dieseldb/issues/new?template=bug_report.yml)
+        - **✨ Feature Requests**: [Suggest new features](https://github.com/Reider85/dieseldb/issues/new?template=feature_request.yml)
+        - **❓ Questions**: [Ask for help](https://github.com/Reider85/dieseldb/issues/new?template=question.yml)
+
+        ## When to Use Each Template
+
+        ### 🐛 Bug Report Template
+        Use this when you encounter a problem or unexpected behavior in DieselDB:
+        - Something crashes or throws an error
+        - The behavior doesn't match the documentation
+        - You find a reproducible issue
+        - Performance is unexpectedly poor
+
+        ### ✨ Feature Request Template
+        Use this when you want to suggest improvements or new features:
+        - You need functionality that doesn't exist
+        - You have ideas for making DieselDB better
+        - You want to enhance existing features
+        - You have suggestions for performance improvements
+
+        ### ❓ Question Template
+        Use this when you need help or clarification:
+        - You don't understand how something works
+        - You need guidance on implementation
+        - You want best practice advice
+        - You're looking for examples
+
+        ## 🤝 Getting Help
+
+        For general questions and community discussions, we recommend using our **[Discussions forum](https://github.com/Reider85/dieseldb/discussions)** instead of issues. This is often faster and allows for more interactive conversations.
+
+        ## 📋 Good First Issues
+
+        If you're new to contributing, check out our **[Good First Issues](https://github.com/Reider85/dieseldb/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22)** - these are beginner-friendly contributions designed to help you get started with the project.
+
+        ## 🎯 Contributing
+
+        We welcome all contributions! Please read our **[CONTRIBUTING.md](https://github.com/Reider85/dieseldb/blob/main/CONTRIBUTING.md)** guidelines for information on how to contribute effectively.
+
+        Thank you for helping improve DieselDB! 🙏
+
+        ---
+        *This is a configuration template. You don't need to fill this out - it's here to help you find the right template for your needs.*

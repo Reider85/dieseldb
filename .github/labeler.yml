@@ -1,0 +1,251 @@
+# Labeler configuration for DieselDB PRs
+# Automatically labels pull requests based on file paths
+
+# Core engine files
+diesel/**:
+  - database-engine
+  - core
+
+src/main/java/diesel/**:
+  - database-engine
+  - core
+
+# Storage related files
+src/main/java/diesel/storage/**:
+  - storage
+  - database-engine
+
+src/main/java/diesel/storage.avro/**:
+  - storage
+  - avro
+  - database-engine
+
+src/main/java/diesel/storage.page/**:
+  - storage
+  - page-storage
+  - database-engine
+
+src/main/java/diesel/storage.json/**:
+  - storage
+  - json
+  - database-engine
+
+src/main/java/diesel/storage.tablespace/**:
+  - storage
+  - tablespace
+  - database-engine
+
+# Network and protocol files
+src/main/java/diesel.net/**:
+  - network
+  - protocol
+  - database-engine
+
+src/main/java/diesel.net.messages/**:
+  - network
+  - protocol
+  - database-engine
+
+src/main/java/diesel.net.libpq/**:
+  - network
+  - postgresql
+  - database-engine
+
+# WAL and recovery files
+src/main/java/diesel.wal/**:
+  - wal
+  - recovery
+  - database-engine
+
+src/main/java/diesel.recovery/**:
+  - wal
+  - recovery
+  - aries
+  - database-engine
+
+# Concurrency files
+src/main/java/diesel.concurrency/**:
+  - concurrency
+  - mvcc
+  - ssi
+  - database-engine
+
+# Security files
+src/main/java/diesel.security/**:
+  - security
+  - rbac
+  - tls
+  - database-engine
+
+# Backup and replication files
+src/main/java/diesel.backup/**:
+  - backup
+  - database-engine
+
+src/main/java/diesel.replication/**:
+  - replication
+  - database-engine
+
+# Observability files
+src/main/java/diesel.observability/**:
+  - observability
+  - monitoring
+  - database-engine
+
+src/main/java/diesel.checksum/**:
+  - checksum
+  - database-engine
+
+# Schema files
+src/main/java/diesel.schema/**:
+  - schema
+  - database-engine
+
+# Test files
+src/test/java/**:
+  - tests
+
+# Drivers
+drivers/**:
+  - drivers
+  - database-engine
+
+# Examples and documentation
+examples/**:
+  - examples
+  - documentation
+
+docs/**:
+  - documentation
+
+# Configuration files
+pom.xml:
+  - build
+  - configuration
+
+config.properties:
+  - configuration
+  - database-engine
+
+# Scripts
+scripts/**:
+  - build
+  - ci
+  - testing
+
+# GitHub workflows
+.github/workflows/**:
+  - ci
+  - automation
+
+# Documentation files
+README.md:
+  - documentation
+
+CONTRIBUTING.md:
+  - documentation
+
+LICENSE:
+  - legal
+
+# Database-specific patterns
+**/*sql*:
+  - sql
+  - database-engine
+
+**/*query*:
+  - sql
+  - database-engine
+
+**/*index*:
+  - indexes
+  - database-engine
+
+**/*transaction*:
+  - transactions
+  - database-engine
+
+**/*lock*:
+  - concurrency
+  - database-engine
+
+**/*page*:
+  - storage
+  - database-engine
+
+**/*buffer*:
+  - storage
+  - database-engine
+
+# Performance related
+**/*performance*:
+  - performance
+  - database-engine
+
+**/*benchmark*:
+  - performance
+  - database-engine
+
+# Security related
+**/*auth*:
+  - security
+  - database-engine
+
+**/*tls*:
+  - security
+  - database-engine
+
+**/*rbac*:
+  - security
+  - database-engine
+
+# Web protocol
+**/*http*:
+  - network
+  - database-engine
+
+**/*wire*:
+  - network
+  - protocol
+  - database-engine
+
+# General labels
+**/*.md:
+  - documentation
+
+**/*.yml:
+  - ci
+  - automation
+
+**/*.yaml:
+  - ci
+  - automation
+
+# Specific component labels
+**/parser*:
+  - sql-parser
+  - database-engine
+
+**/optimizer*:
+  - query-optimizer
+  - database-engine
+
+**/executor*:
+  - query-execution
+  - database-engine
+
+**/catalog*:
+  - catalog
+  - database-engine
+
+**/cli*:
+  - cli
+  - database-engine
+
+**/*server*:
+  - server
+  - database-engine
+
+**/*client*:
+  - client
+  - database-engine

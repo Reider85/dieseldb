@@ -1,0 +1,133 @@
+name: Bug Report
+description: Report a bug you've encountered in DieselDB
+title: "[BUG] "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug in DieselDB! Please fill out the information below to help us understand and reproduce the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: Describe the bug in detail...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Execute 'CREATE TABLE ...'
+        2. Run 'INSERT INTO ...'
+        3. Observe the error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen
+      placeholder: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: A clear and concise description of what actually happened
+      placeholder: What actually happened...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: DieselDB Version
+      description: The version of DieselDB you're using (check pom.xml)
+      placeholder: "3.3.99"
+    validations:
+      required: true
+
+  - type: input
+    id: jdk
+    attributes:
+      label: JDK Version
+      description: The Java Development Kit version
+      placeholder: "21.0.2"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      description: Your operating system and version
+      placeholder: "Ubuntu 22.04 LTS"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: storage
+    attributes:
+      label: Storage Backend
+      description: Which storage backend are you using?
+      options:
+        - in_memory
+        - csv
+        - tsv
+        - jsonl
+        - avro
+    validations:
+      required: true
+
+  - type: textarea
+    id: sql
+    attributes:
+      label: SQL Query
+      description: The SQL query that causes the issue (if applicable)
+      placeholder: |
+        CREATE TABLE test (id INTEGER, name STRING);
+        INSERT INTO test VALUES (1, 'test');
+        SELECT * FROM test WHERE id = 1;
+    render: sql
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Any error messages or logs (if available)
+      placeholder: |
+        ERROR: [error message here]
+        Stack trace...
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+      placeholder: Additional information that might be helpful...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues for duplicates
+          required: true
+        - label: I have read the documentation
+          required: true
+        - label: I can reproduce the issue consistently
+          required: true

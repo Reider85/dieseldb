@@ -1,0 +1,151 @@
+name: Feature Request
+description: Suggest a new feature or improvement for DieselDB
+title: "[FEATURE] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature for DieselDB! Please provide as much detail as possible to help us understand your request.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Feature Description
+      description: A clear and concise description of the feature you'd like to see
+      placeholder: Describe the feature in detail...
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: Is this feature related to a problem you're trying to solve? If so, please describe it
+      placeholder: I'm trying to solve... but the current implementation doesn't support...
+    validations:
+      required: false
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe how you'd like this feature to work
+      placeholder: I suggest adding... with the following behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or features you've considered
+      placeholder: I also considered... but it has drawbacks...
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Critical - blocking my work
+        - High - very important
+        - Medium - would be nice to have
+        - Low - nice to have someday
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which category does this feature belong to?
+      options:
+        - SQL Language Features
+        - Storage Engine
+        - Performance Optimization
+        - Security & Authentication
+        - Replication & High Availability
+        - Administration & Operations
+        - Developer Experience
+        - Documentation
+        - Drivers & Integrations
+        - Testing & Quality
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use Cases
+      description: Describe specific use cases where this feature would be valuable
+      placeholder: |
+        Use case 1: When users need to...
+        Use case 2: For applications that...
+        Use case 3: In scenarios where...
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples
+      description: Provide examples of how this feature would be used
+      placeholder: |
+        -- Example 1
+        SELECT ... WITH NEW_FEATURE ...
+        
+        -- Example 2  
+        CREATE TABLE ... WITH NEW_FEATURE ...
+    render: sql
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Ideas
+      description: Any thoughts on how this could be implemented? (optional)
+      placeholder: This could be implemented by...
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Does this feature depend on other features or changes?
+      placeholder: This feature requires... to be implemented first
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives-workaround
+    attributes:
+      label: Current Workarounds
+      description: How are you currently working around this limitation?
+      placeholder: Right now I'm using... but it's not ideal because...
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or examples
+      placeholder: Additional information that might be helpful...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues for similar requests
+          required: true
+        - label: I have read the documentation
+          required: true
+        - label: This feature is not already implemented
+          required: true

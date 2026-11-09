@@ -1,0 +1,51 @@
+name: Create Welcome Discussion
+
+on:
+  workflow_dispatch:
+    inputs:
+      discussion_type:
+        description: 'Type of discussion to create'
+        type: choice
+        options: ['welcome', 'roadmap', 'use_cases']
+        required: true
+
+jobs:
+  create-discussion:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Welcome Discussion
+        if: ${{ github.event.inputs.discussion_type == 'welcome' }}
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Welcome to DieselDB Discussions"
+          content-filepath: .github/discussions/welcome.md
+          labels: "welcome,announcement"
+          
+      - name: Create Roadmap Discussion
+        if: ${{ github.event.inputs.discussion_type == 'roadmap' }}
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Roadmap v3.5 / v4.0 — what's planned"
+          content-filepath: .github/discussions/roadmap.md
+          labels: "roadmap,planning"
+          
+      - name: Create Use Cases Discussion
+        if: ${{ github.event.inputs.discussion_type == 'use_cases' }}
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Use cases — share yours!"
+          content-filepath: .github/discussions/use-cases.md
+          labels: "use-cases,community"
+
+      - name: Create Good First Issue Welcome
+        if: ${{ github.event.inputs.discussion_type == 'welcome' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "Getting Started with DieselDB — Good First Issues",
+              body: file://.github/discussions/good-first-issue-welcome.md,
+              labels: ["good first issue", "help wanted", "documentation"]
+            })

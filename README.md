@@ -2,14 +2,18 @@
 
 > **Production-grade Java database engine with ARIES recovery, WAL, page-based storage, online schema changes, and SSI concurrency control**
 >
+> A modern, embeddable and client-server database engine written in Java 21 (LTS) featuring crash recovery with ARIES, write-ahead logging with group commit, page-based storage with MVCC, online schema changes, RBAC security, and full PostgreSQL protocol compatibility.
+>
 > Production-grade база данных на Java 21 (LTS) с фокусом на современных DB-engineering практиках: ARIES crash recovery, segmented WAL с group commit, page-based storage с BufferPool (LRU eviction), MVCC с SSI для SERIALIZABLE, online `ALTER TABLE` (DEFAULT/COPY/INPLACE + LOCK), RBAC + TLS/mTLS/SNI multi-tenant, async audit log.
 
-[![Java Version](https://img.shields.io/badge/Java-21%20LTS-orange.svg)](https://openjdk.org/projects/jdk/21/)
-[![Maven](https://img.shields.io/badge/Maven-3.9%2B-blue.svg)](https://maven.apache.org/)
-[![Version](https://img.shields.io/badge/version-3.3.99-green.svg)](#releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/Reider85/dieseldb/ci.yml)](https://github.com/Reider85/dieseldb/actions)
+[![CI](https://github.com/Reider85/dieseldb/actions/workflows/ci.yml/badge.svg)](https://github.com/Reider85/dieseldb/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Reider85/dieseldb)](https://github.com/Reider85/dieseldb/releases)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Reider85/dieseldb/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/Reider85/dieseldb?style=social)](https://github.com/Reider85/dieseldb/stargazers)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
+[![Java](https://img.shields.io/badge/Java-21%20LTS-orange.svg)](https://openjdk.org/projects/jdk/21/)
+[![codecov](https://codecov.io/gh/Reider85/dieseldb/branch/main/graph/badge.svg)](https://codecov.io/gh/Reider85/dieseldb)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/Reider85/dieseldb/pulls)
+[![Maven](https://img.shields.io/badge/Maven-3.9%2B-blue.svg)](https://maven.apache.org/)
 
 > 🚀 **Status:** Production-like. Current version `3.3.99` — see [§ Releases](#releases) and [§ Roadmap](#roadmap).
 

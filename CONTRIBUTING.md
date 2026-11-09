@@ -45,6 +45,39 @@ make compile     # verify it compiles
 make test        # fast test suite
 ```
 
+## Quick Start for Contributors
+
+### Finding Good First Issues
+Look for issues labeled with `good first issue` and `help wanted`. These are designed for new contributors and typically take 1-2 hours to complete.
+
+### Setting Up Your Environment
+1. **Fork and Clone**: Fork the repository and clone your fork locally
+2. **Build**: `make compile` to verify everything builds correctly
+3. **Test**: `make test` to run the fast test suite
+4. **Pick an Issue**: Browse [GitHub Issues](https://github.com/Reider85/dieseldb/issues) for `good first issue` labeled items
+
+### Running Specific Tests
+```bash
+# Run a specific test class
+make test-one T=QueryParserTest#testSelect
+
+# Run tests for a specific profile
+make test-core  # Integration tests
+make test-concurrency  # Concurrency tests
+```
+
+### Making Changes
+1. Create a feature branch: `git checkout -b feature/my-improvement`
+2. Make your changes and add tests
+3. Run relevant test gates (see table above)
+4. Commit with descriptive message
+5. Open a pull request against `main`
+
+### Getting Help
+- Use [Discussions](https://github.com/Reider85/dieseldb/discussions) for questions
+- Check existing issues and pull requests
+- Join the community discussions for guidance
+
 On Windows PowerShell:
 
 ```powershell
