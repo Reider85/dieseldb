@@ -1,0 +1,11 @@
+<settings>
+  <localRepository>${user.home}/.m2/repository</localRepository>
+  <buildCache>
+    <enabled>true</enabled>
+    <dir>${user.home}/.m2/build-cache/v1</dir>
+    <maxSize>2g</maxSize>
+    <evictPolicy>LRU</evictPolicy>
+    <evictCount>100</evictCount>
+    <evictTtlSeconds>86400</evictTtlSeconds>
+  </buildCache>
+</settings>

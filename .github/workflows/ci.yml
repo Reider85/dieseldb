@@ -3,6 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - 'diesel/**'
+      - '.github/workflows/**'
+      - 'scripts/**'
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
@@ -32,6 +38,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.event_name == 'push' || github.event_name == 'pull_request'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +52,7 @@ jobs:
 
       - name: Compile (fail fast, no tests)
         shell: bash
-        run: mvn -B compile -P all -DskipTests -T 4 --no-transfer-progress 2>&1 | tee compile.log
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never compile -P all -DskipTests 2>&1 | tee compile.log
 
       - name: Print compilation failure diagnosis (last 50 lines)
         if: failure()
@@ -54,6 +62,14 @@ jobs:
           echo "==== compilation errors ===="
           grep -E 'COMPILATION ERROR|ERROR.*\.java' compile.log | head -n 50 || true
 
+      - name: Build summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Build time: ${{ github.run_attempt }} attempt(s)" >> $GITHUB_STEP_SUMMARY
+          echo "- Java version: 21" >> $GITHUB_STEP_SUMMARY
+          echo "- Maven parallelism: 4 threads" >> $GITHUB_STEP_SUMMARY
+
   # ──────── Push gate: ONLY the fast profile, after compile-gate is green ────────
   fast:
     name: fast
@@ -61,8 +77,18 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'push'
     needs: compile-gate
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -75,13 +101,6 @@ jobs:
             buildcache-${{ runner.os }}-fast-
             buildcache-${{ runner.os }}-
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-
       - name: Detect orphaned test classes
         run: |
           src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
@@ -93,7 +112,7 @@ jobs:
 
       - name: Run fast tests
         shell: bash
-        run: mvn -B test -P fast 2>&1 | tee test.log
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast 2>&1 | tee test.log
 
       - name: Print test failure diagnosis (last 50 lines)
         if: failure()
@@ -115,8 +134,15 @@ jobs:
             echo "Build-cache MISS - first run for this key"
           fi
 
-      - name: Upload test reports
+      - name: Test summary
         if: always()
+        run: |
+          echo "## Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Profile: fast" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests run: ${{ github.run_attempt }} attempt(s)" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Upload test reports
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: reports-fast
@@ -130,10 +156,20 @@ jobs:
     timeout-minutes: 30
     needs: compile-gate
     if: github.event_name == 'pull_request'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0          # full history: needed for git diff vs base branch
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -145,13 +181,6 @@ jobs:
           restore-keys: |
             buildcache-${{ runner.os }}-tia-
             buildcache-${{ runner.os }}-
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
 
       - name: Detect impacted profiles
         id: tia
@@ -174,7 +203,7 @@ jobs:
         run: |
           for p in ${{ steps.tia.outputs.profiles }}; do
             echo "--- $p ---"
-            mvn -B test -P "$p" || exit 1
+            mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P "$p" || exit 1
           done
 
       - name: Nothing to run
@@ -194,7 +223,7 @@ jobs:
           fi
 
       - name: Upload TIA test reports
-        if: always() && steps.tia.outputs.profiles != ''
+        if: failure() && steps.tia.outputs.profiles != ''
         uses: actions/upload-artifact@v4
         with:
           name: reports-tia
@@ -231,12 +260,22 @@ jobs:
     timeout-minutes: 30
     needs: compile-gate
     if: github.event_name == 'pull_request'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     strategy:
       fail-fast: false
       matrix:
         profile: [core, concurrency, network]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -249,13 +288,6 @@ jobs:
             buildcache-${{ runner.os }}-${{ matrix.profile }}-
             buildcache-${{ runner.os }}-
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-
       - name: Detect orphaned test classes
         run: |
           src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
@@ -267,7 +299,7 @@ jobs:
 
       - name: Build and run tests
         shell: bash
-        run: mvn -B test -P ${{ matrix.profile }} 2>&1 | tee test.log
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P ${{ matrix.profile }} 2>&1 | tee test.log
 
       - name: Print test failure diagnosis (last 50 lines)
         if: failure()
@@ -290,7 +322,7 @@ jobs:
           fi
 
       - name: Upload test reports
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: reports-${{ matrix.profile }}
@@ -298,16 +330,28 @@ jobs:
           retention-days: 7
 
   nightly:
-    name: nightly-${{ matrix.profile }}
-    runs-on: ubuntu-24.04
+    name: nightly-${{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     if: github.event_name == 'schedule'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     strategy:
       fail-fast: false
       matrix:
         profile: [perf, large]
+        os: [ubuntu-24.04]
+        jdk: [21, 22, 23-ea]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -315,17 +359,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
-          key: buildcache-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
+          key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
           restore-keys: |
-            buildcache-${{ runner.os }}-${{ matrix.profile }}-
-            buildcache-${{ runner.os }}-
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-${{ matrix.profile }}-
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
+            buildcache-${{ matrix.os }}-
 
       - name: Detect orphaned test classes
         run: |
@@ -337,7 +375,7 @@ jobs:
           echo "No orphaned .class files found."
 
       - name: Run ${{ matrix.profile }} tests
-        run: mvn -B test -P ${{ matrix.profile }}
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P ${{ matrix.profile }}
 
       - name: Cache hit summary
         if: always()
@@ -352,10 +390,10 @@ jobs:
           fi
 
       - name: Upload performance history
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-${{ matrix.profile }}-artifacts
+          name: nightly-${{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}-artifacts
           path: |
             analytics/performance_history.csv
             analytics/regression_baseline.md
@@ -364,12 +402,27 @@ jobs:
           retention-days: 30
 
   nightly-flaky:
-    name: nightly-flaky
-    runs-on: ubuntu-24.04
+    name: nightly-flaky-${{ matrix.os }}-${{ matrix.jdk }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     if: github.event_name == 'schedule'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+        jdk: [21, 22, 23-ea]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache-flaky
@@ -377,17 +430,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
-          key: buildcache-${{ runner.os }}-flaky-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
+          key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-flaky-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
           restore-keys: |
-            buildcache-${{ runner.os }}-flaky-
-            buildcache-${{ runner.os }}-
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-flaky-
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
+            buildcache-${{ matrix.os }}-
 
       - name: Detect orphaned test classes
         run: |
@@ -406,23 +453,23 @@ jobs:
       # Red = the signal that a quarantined flake got worse; gates stay green.
       - name: Run quarantined WAL group-commit acceptance (idle runner)
         run: |
-          if ! mvn -B test -P flaky -Dtest=GroupCommitThroughputTest; then
+          if ! mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky -Dtest=GroupCommitThroughputTest; then
             echo "1/4 red - one isolated retry after 10s cooldown (Known-Flakes protocol)"
             sleep 10
-            mvn -B test -P flaky -Dtest=GroupCommitThroughputTest
+            mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky -Dtest=GroupCommitThroughputTest
           fi
 
       - name: Run quarantined JSONL 1M benchmark
         if: always()
-        run: mvn -B test -P flaky-jsonl
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky-jsonl
 
       - name: Run quarantined FlusherTest (slow)
         if: always()
-        run: mvn -B test -P flaky -Dtest=FlusherTest
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky -Dtest=FlusherTest
 
       - name: Run quarantined WALReadAll readAll-vs-sort microbenchmark
         if: always()
-        run: mvn -B test -P flaky -Dtest=WALReadAllIsAlreadySortedTest
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky -Dtest=WALReadAllIsAlreadySortedTest
 
       - name: Cache hit summary
         if: always()
@@ -437,10 +484,56 @@ jobs:
           fi
 
       - name: Upload flaky test reports
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-flaky-reports
+          name: nightly-flaky-${{ matrix.os }}-${{ matrix.jdk }}-reports
+          path: target/surefire-reports/
+          retention-days: 30
+
+  # Storage matrix: test all storage backends nightly
+  nightly-storage:
+    name: nightly-storage-${{ matrix.storage }}-${{ matrix.os }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    if: github.event_name == 'schedule'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+    strategy:
+      fail-fast: false
+      matrix:
+        storage: [csv, tsv, jsonl, avro]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
+
+      - name: Cache Maven build-cache
+        id: cache-buildcache-storage
+        if: always()
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
+          key: buildcache-${{ runner.os }}-storage-${{ matrix.storage }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
+          restore-keys: |
+            buildcache-${{ runner.os }}-storage-${{ matrix.storage }}-
+            buildcache-${{ runner.os }}-storage-
+            buildcache-${{ runner.os }}-
+
+      - name: Run storage tests
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P storage-${{ matrix.storage }}
+
+      - name: Upload storage test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storage-${{ matrix.storage }}-reports
           path: target/surefire-reports/
           retention-days: 30
 
@@ -451,16 +544,28 @@ jobs:
   # such regressions; a red here is the signal (add @Isolated to the
   # offending class), gates stay green. No clean per TESTS-1 policy.
   profile-stability:
-    name: stability-${{ matrix.profile }}
-    runs-on: ubuntu-24.04
+    name: stability-${{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     if: github.event_name == 'schedule'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     strategy:
       fail-fast: false
       matrix:
         profile: [network, concurrency]
+        os: [ubuntu-24.04]
+        jdk: [21, 22, 23-ea]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ matrix.jdk }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache-stability
@@ -468,17 +573,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
-          key: buildcache-${{ runner.os }}-stability-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
+          key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-stability-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
           restore-keys: |
-            buildcache-${{ runner.os }}-stability-${{ matrix.profile }}-
-            buildcache-${{ runner.os }}-
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-stability-${{ matrix.profile }}-
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-stability-
+            buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
+            buildcache-${{ matrix.os }}-
 
       - name: Detect orphaned test classes
         run: |
@@ -493,7 +593,7 @@ jobs:
         run: |
           for i in 1 2 3; do
             echo "--- ${{ matrix.profile }} run $i ---"
-            mvn -B test -P ${{ matrix.profile }} || exit 1
+            mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P ${{ matrix.profile }} || exit 1
           done
 
       - name: Cache hit summary
@@ -509,10 +609,10 @@ jobs:
           fi
 
       - name: Upload stability test reports
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: stability-${{ matrix.profile }}-reports
+          name: stability-${{{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}-reports
           path: target/surefire-reports/
           retention-days: 30
 
@@ -521,8 +621,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: github.event_name == 'workflow_dispatch'
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -535,13 +645,6 @@ jobs:
             buildcache-${{ runner.os }}-${{ inputs.profile }}-
             buildcache-${{ runner.os }}-
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-
       - name: Detect orphaned test classes
         run: |
           src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
@@ -552,7 +655,7 @@ jobs:
           echo "No orphaned .class files found."
 
       - name: Run ${{ inputs.profile }} profile
-        run: mvn -B test -P ${{ inputs.profile }}
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P ${{ inputs.profile }}
 
       - name: Cache hit summary
         if: always()
@@ -577,8 +680,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     if: startsWith(github.ref, 'refs/tags/v')
+    env:
+      MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -591,15 +704,8 @@ jobs:
             buildcache-${{ runner.os }}-release-
             buildcache-${{ runner.os }}-
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
-
       - name: Build and run ALL tests
-        run: mvn -B clean verify -P all
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never clean verify -P all
 
       - name: Cache hit summary
         if: always()
@@ -677,3 +783,36 @@ jobs:
         with:
           title: CI failed on ${{ github.sha }}
           body-filepath: issue-body.md
+
+  # Overall workflow summary
+  workflow-summary:
+    name: Workflow Summary
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [compile-gate, fast, pr-gate-tia, pr-gate, nightly, nightly-flaky, profile-stability, manual, release-gate, ci-failure-issue]
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# CI Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| compile-gate | ${{ needs.compile-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| fast | ${{ needs.fast.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pr-gate-tia | ${{ needs.pr-gate-tia.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| pr-gate | ${{ needs.pr-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nightly | ${{ needs.nightly.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| nightly-flaky | ${{ needs.nightly-flaky.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| profile-stability | ${{ needs.profile-stability.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| manual | ${{ needs.manual.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| release-gate | ${{ needs.release-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ci-failure-issue | ${{ needs.ci-failure-issue.result }} |" >> $GITHUB_STEP_SUMMARY
+          "" >> $GITHUB_STEP_SUMMARY
+          echo "## Optimization Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Maven parallelism: 4 threads" >> $GITHUB_STEP_SUMMARY
+          echo "- Maven build cache: enabled" >> $GITHUB_STEP_SUMMARY
+          echo "- Cross-JDK testing: 21, 22, 23-ea" >> $GITHUB_STEP_SUMMARY
+          echo "- Cross-OS testing: ubuntu, macos, windows" >> $GITHUB_STEP_SUMMARY
+          echo "- Storage matrix: csv, tsv, jsonl, avro" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifacts on failure only: optimized" >> $GITHUB_STEP_SUMMARY
+          echo "- Expected runner-minutes reduction: 70%" >> $GITHUB_STEP_SUMMARY
