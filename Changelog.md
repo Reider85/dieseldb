@@ -999,3 +999,14 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.18 GITHUB-1 fix CI: compile-gate fail-fast, fast-only push gate, corrected cache keys, auto-issue on failure
 
 3.4.19 Fix ConcurrentModificationException in DieselLogConfigTest
+
+3.4.20 Implement Hybrid CI/CD system with auto-switching between GitHub Actions and local execution
+- Add hybrid CI/CD workflow with smart routing based on GitHub runner limits
+- Implement security scanning with CodeQL and dependency vulnerability scanning
+- Create enhanced nightly tests with mutation testing and stress testing
+- Add JaCoCo code coverage (70% line, 60% branch) and PITest mutation testing (50% threshold)
+- Implement local test runner for fallback mode with critical testing
+- Add GitHub limit detection scripts for automatic mode switching
+- Create self-hosted runner setup with systemd integration
+- Add Dependabot configuration for automated dependency updates
+- Provide comprehensive documentation and badge system
