@@ -9,11 +9,10 @@ on:
       - 'diesel/**'
       - '.github/workflows/**'
       - 'scripts/**'
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - 'NOTICE'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!LICENSE'
+      - '!NOTICE'
   pull_request:
     branches: [main]
   schedule:

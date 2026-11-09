@@ -1,1 +1,1 @@
-3.4.19 Fix ConcurrentModificationException in DieselLogConfigTest
+3.4.31 fix(ci): repair release-on-push.yml YAML and ci.yml paths filter

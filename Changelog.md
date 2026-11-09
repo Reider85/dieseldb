@@ -1008,3 +1008,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.28 Prompt5 #5: GitHub Trending strategy implementation
 3.4.29 docs: implement prompt 6 - GitHub Pages + auto-changelog + status badges
 3.4.30 Prompt7 #7: Implement engagement loop with community tools
+
+3.4.31 fix(ci): repair release-on-push.yml YAML and ci.yml paths filter
