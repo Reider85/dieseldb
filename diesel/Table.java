@@ -4052,10 +4052,10 @@ if (clusteredKeyBlocked(key)) {
             
             // Use enhanced RowStorage interface to reduce null check and instanceof duplication
             if (storage != null && storage.supportsPersistence()) {
-                System.out.println("DEBUG: Calling storage.saveToFile for table " + tableName);
+                LOGGER.debug("Calling storage.saveToFile for table {}", tableName);
                 try {
                     RowStorage.callWith(storage,s -> s.saveToFile(tableName));
-                    System.out.println("DEBUG: storage.saveToFile completed successfully");
+                    LOGGER.debug("storage.saveToFile completed successfully");
                 } catch (RuntimeException e) {
                     // Restore dirty flags on failure so retry can succeed
                     persistDirty = wasDirty;

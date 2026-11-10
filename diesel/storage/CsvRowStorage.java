@@ -8,6 +8,9 @@ import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.Charset;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -123,10 +126,10 @@ public class CsvRowStorage extends AbstractRowStorage {
         List<Object[]> snapshot;
         synchronized (this) {
             snapshot = new ArrayList<>(rows);
-            System.out.println("DEBUG: saveToFile snapshot size: " + snapshot.size());
+            LOGGER.debug("saveToFile snapshot size: {}", snapshot.size());
             for (int i = 0; i < snapshot.size(); i++) {
                 Object[] row = snapshot.get(i);
-                System.out.println("DEBUG: Row " + i + ": " + java.util.Arrays.toString(row));
+                LOGGER.debug("Row {}: {}", i, java.util.Arrays.toString(row));
             }
         }
         saveCsv(tableName, snapshot);
@@ -166,8 +169,8 @@ public class CsvRowStorage extends AbstractRowStorage {
     // ─── CSV persistence ────────────────────────────────────────────
 
     private void saveCsv(String tableName, List<Object[]> snapshot) {
-        System.out.println("DEBUG: saveCsv called for table " + tableName + " with " + snapshot.size() + " rows");
-        System.out.println("DEBUG: Snapshot data: " + snapshot);
+        LOGGER.debug("saveCsv called for table {} with {} rows", tableName, snapshot.size());
+        LOGGER.debug("Snapshot data: {}", snapshot);
         CompressionCodec codec = CompressionFactory.resolveLeveled(COMPRESSION_CODEC_KEY, COMPRESSION_LEVEL_KEY);
         File base = new File(resolveFilePath(".csv"));
         String fileName = CompressionFactory.delimitedWriteTarget(base, codec).getPath();
