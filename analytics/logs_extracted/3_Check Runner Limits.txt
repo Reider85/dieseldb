@@ -1,0 +1,66 @@
+﻿2026-11-10T20:36:45.3363469Z Current runner version: '2.338.2'
+2026-11-10T20:36:45.3384745Z ##[group]Runner Image Provisioner
+2026-11-10T20:36:45.3385469Z Hosted Compute Agent
+2026-11-10T20:36:45.3385977Z Version: 20261028.624
+2026-11-10T20:36:45.3386636Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T20:36:45.3387299Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T20:36:45.3387935Z Worker ID: {63bcd207-264b-45e4-841f-5cb81530b330}
+2026-11-10T20:36:45.3388545Z Region: westus2
+2026-11-10T20:36:45.3389009Z Cloud: Azure
+2026-11-10T20:36:45.3389582Z ##[endgroup]
+2026-11-10T20:36:45.3391185Z ##[group]Operating System
+2026-11-10T20:36:45.3391795Z Ubuntu
+2026-11-10T20:36:45.3392284Z 24.04.5
+2026-11-10T20:36:45.3392751Z LTS
+2026-11-10T20:36:45.3393284Z ##[endgroup]
+2026-11-10T20:36:45.3393824Z ##[group]Runner Image
+2026-11-10T20:36:45.3394363Z Image: ubuntu-24.04
+2026-11-10T20:36:45.3394892Z Version: 20261101.360.1
+2026-11-10T20:36:45.3395986Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-10T20:36:45.3397345Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-10T20:36:45.3398188Z ##[endgroup]
+2026-11-10T20:36:45.3400947Z ##[group]GITHUB_TOKEN Permissions
+2026-11-10T20:36:45.3402984Z Actions: write
+2026-11-10T20:36:45.3403552Z ArtifactMetadata: write
+2026-11-10T20:36:45.3404097Z Attestations: write
+2026-11-10T20:36:45.3405008Z Checks: write
+2026-11-10T20:36:45.3405504Z CodeQuality: write
+2026-11-10T20:36:45.3406051Z Contents: write
+2026-11-10T20:36:45.3406569Z CopilotRequests: write
+2026-11-10T20:36:45.3407088Z Deployments: write
+2026-11-10T20:36:45.3407624Z Discussions: write
+2026-11-10T20:36:45.3408117Z Drives: write
+2026-11-10T20:36:45.3408620Z Issues: write
+2026-11-10T20:36:45.3409272Z Metadata: read
+2026-11-10T20:36:45.3409882Z Models: read
+2026-11-10T20:36:45.3410402Z Packages: write
+2026-11-10T20:36:45.3410897Z Pages: write
+2026-11-10T20:36:45.3411393Z PullRequests: write
+2026-11-10T20:36:45.3411980Z RepositoryProjects: write
+2026-11-10T20:36:45.3412538Z SecurityEvents: write
+2026-11-10T20:36:45.3413062Z Statuses: write
+2026-11-10T20:36:45.3413581Z VulnerabilityAlerts: read
+2026-11-10T20:36:45.3414134Z ##[endgroup]
+2026-11-10T20:36:45.3416300Z Secret source: Actions
+2026-11-10T20:36:45.3417099Z Cache mode: write
+2026-11-10T20:36:45.3417883Z Prepare workflow directory
+2026-11-10T20:36:45.3739513Z Prepare all required actions
+2026-11-10T20:36:45.3846658Z Complete job name: Check Runner Limits
+2026-11-10T20:36:45.4783438Z ##[group]Run # Determine mode based on input
+2026-11-10T20:36:45.4784559Z [36;1m# Determine mode based on input[0m
+2026-11-10T20:36:45.4785463Z [36;1mif [ "" = "local" ]; then[0m
+2026-11-10T20:36:45.4786366Z [36;1m  echo "use_local=true" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4787349Z [36;1m  echo "Mode: Manual override to local"[0m
+2026-11-10T20:36:45.4788333Z [36;1melif [ "" = "github" ]; then[0m
+2026-11-10T20:36:45.4789219Z [36;1m  echo "use_local=false" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4790462Z [36;1m  echo "Mode: Manual override to GitHub"[0m
+2026-11-10T20:36:45.4791376Z [36;1melse[0m
+2026-11-10T20:36:45.4792210Z [36;1m  echo "use_local=false" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4793259Z [36;1m  echo "Mode: Auto - using GitHub Actions"[0m
+2026-11-10T20:36:45.4794122Z [36;1mfi[0m
+2026-11-10T20:36:45.7240623Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:36:45.7241514Z ##[endgroup]
+2026-11-10T20:36:45.7458801Z Mode: Auto - using GitHub Actions
+2026-11-10T20:36:45.7597069Z Evaluate and set job outputs
+2026-11-10T20:36:45.7607309Z Set output 'use_local'
+2026-11-10T20:36:45.7608872Z Cleaning up orphan processes

@@ -1,0 +1,77 @@
+﻿2026-11-10T20:40:26.7945594Z Current runner version: '2.338.2'
+2026-11-10T20:40:26.7969433Z ##[group]Runner Image Provisioner
+2026-11-10T20:40:26.7970674Z Hosted Compute Agent
+2026-11-10T20:40:26.7971284Z Version: 20261028.624
+2026-11-10T20:40:26.7972078Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T20:40:26.7972821Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T20:40:26.7973572Z Worker ID: {07eecd93-62ad-4251-ac6a-cb63ae408ab3}
+2026-11-10T20:40:26.7974340Z Region: westcentralus
+2026-11-10T20:40:26.7974980Z Cloud: Azure
+2026-11-10T20:40:26.7975681Z ##[endgroup]
+2026-11-10T20:40:26.7977439Z ##[group]Operating System
+2026-11-10T20:40:26.7978100Z Ubuntu
+2026-11-10T20:40:26.7978781Z 24.04.5
+2026-11-10T20:40:26.7979315Z LTS
+2026-11-10T20:40:26.7980171Z ##[endgroup]
+2026-11-10T20:40:26.7980788Z ##[group]Runner Image
+2026-11-10T20:40:26.7981404Z Image: ubuntu-24.04
+2026-11-10T20:40:26.7982081Z Version: 20261101.360.1
+2026-11-10T20:40:26.7983387Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-10T20:40:26.7985104Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-10T20:40:26.7986080Z ##[endgroup]
+2026-11-10T20:40:26.7989261Z ##[group]GITHUB_TOKEN Permissions
+2026-11-10T20:40:26.7992403Z Actions: write
+2026-11-10T20:40:26.7993070Z ArtifactMetadata: write
+2026-11-10T20:40:26.7993706Z Attestations: write
+2026-11-10T20:40:26.7994661Z Checks: write
+2026-11-10T20:40:26.7995267Z CodeQuality: write
+2026-11-10T20:40:26.7995866Z Contents: write
+2026-11-10T20:40:26.7996519Z CopilotRequests: write
+2026-11-10T20:40:26.7997143Z Deployments: write
+2026-11-10T20:40:26.7997770Z Discussions: write
+2026-11-10T20:40:26.7998451Z Drives: write
+2026-11-10T20:40:26.7998987Z Issues: write
+2026-11-10T20:40:26.7999739Z Metadata: read
+2026-11-10T20:40:26.8000574Z Models: read
+2026-11-10T20:40:26.8001196Z Packages: write
+2026-11-10T20:40:26.8001799Z Pages: write
+2026-11-10T20:40:26.8002425Z PullRequests: write
+2026-11-10T20:40:26.8003138Z RepositoryProjects: write
+2026-11-10T20:40:26.8003987Z SecurityEvents: write
+2026-11-10T20:40:26.8004694Z Statuses: write
+2026-11-10T20:40:26.8005372Z VulnerabilityAlerts: read
+2026-11-10T20:40:26.8005996Z ##[endgroup]
+2026-11-10T20:40:26.8008422Z Secret source: Actions
+2026-11-10T20:40:26.8009393Z Cache mode: write
+2026-11-10T20:40:26.8010624Z Prepare workflow directory
+2026-11-10T20:40:26.8361935Z Prepare all required actions
+2026-11-10T20:40:26.8463746Z Complete job name: CI Summary
+2026-11-10T20:40:26.9578068Z ##[group]Run echo "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY
+2026-11-10T20:40:26.9579175Z [36;1mecho "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9580473Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9581293Z [36;1mecho "| Job | Status | Mode |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9582250Z [36;1mecho "|---|---|---|" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9583220Z [36;1mecho "| Check Limits | success | Auto-detect |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9584261Z [36;1mecho "| GitHub CI | failure | GitHub |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9585306Z [36;1mecho "| Local CI | skipped | Skipped |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9586163Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9586927Z [36;1mecho "## CI Mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9587786Z [36;1mecho "- Mode: GitHub Actions" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9588725Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9589497Z [36;1mecho "## Test Results" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9590680Z [36;1mecho "- Coverage reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9591900Z [36;1mecho "- Test reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9593196Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9593981Z [36;1mecho "## Next Steps" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9594968Z [36;1mif [ "false" = "true" ]; then[0m
+2026-11-10T20:40:26.9595966Z [36;1m  echo "- ⚠️  Running in local fallback mode due to GitHub limits" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9597314Z [36;1m  echo "- 🔄 Full GitHub CI will resume when capacity is available" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9598283Z [36;1melse[0m
+2026-11-10T20:40:26.9599020Z [36;1m  echo "- ✅ Running in normal GitHub CI mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9600330Z [36;1m  echo "- 📊 Full test coverage and security scanning active" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9601310Z [36;1mfi[0m
+2026-11-10T20:40:26.9879608Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:40:26.9880906Z ##[endgroup]
+2026-11-10T20:40:27.0257726Z /home/runner/work/_temp/18c834ae-9cf8-43d1-9052-e40710ed6816.sh: line 8: : command not found
+2026-11-10T20:40:27.0276131Z ##[error]Process completed with exit code 127.
+2026-11-10T20:40:27.0455868Z Cleaning up orphan processes

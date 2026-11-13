@@ -1,1 +1,1 @@
-3.4.32 Remove hardcoded DEBUG System.out.println calls that ignore logging configuration
+3.4.36 Fix exit code 127 in workflow-summary job by replacing empty string with proper echo command

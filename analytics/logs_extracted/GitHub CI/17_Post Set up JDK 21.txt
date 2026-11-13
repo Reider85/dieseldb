@@ -1,0 +1,4 @@
+﻿2026-11-10T20:40:20.6045504Z ##[warning]Unexpected input(s) 'build-cache', valid inputs are ['java-version', 'java-version-file', 'distribution', 'java-package', 'architecture', 'jdkFile', 'check-latest', 'server-id', 'server-username', 'server-password', 'settings-path', 'overwrite-settings', 'gpg-private-key', 'gpg-passphrase', 'cache', 'cache-dependency-path', 'job-status', 'token', 'mvn-toolchain-id', 'mvn-toolchain-vendor']
+2026-11-10T20:40:20.6052315Z Post job cleanup.
+2026-11-10T20:40:20.7501487Z (node:4676) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-10T20:40:20.7502269Z (Use `node --trace-deprecation ...` to show where the warning was created)

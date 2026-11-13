@@ -1,0 +1,19 @@
+﻿2026-11-10T20:36:55.7309714Z ##[group]Run actions/cache@v4
+2026-11-10T20:36:55.7310014Z with:
+2026-11-10T20:36:55.7310271Z   path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
+2026-11-10T20:36:55.7310824Z   key: buildcache-Linux-github-73f0fed9d89e35a189df856d11c94b6d1de5cd2cda1dfdde5e3221cd954c5b82
+2026-11-10T20:36:55.7311403Z   restore-keys: buildcache-Linux-github-
+buildcache-Linux-
+
+2026-11-10T20:36:55.7311762Z   enableCrossOsArchive: false
+2026-11-10T20:36:55.7312025Z   fail-on-cache-miss: false
+2026-11-10T20:36:55.7312266Z   lookup-only: false
+2026-11-10T20:36:55.7312487Z   save-always: false
+2026-11-10T20:36:55.7312959Z env:
+2026-11-10T20:36:55.7313182Z   MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+2026-11-10T20:36:55.7313564Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:36:55.7314067Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:36:55.7314446Z ##[endgroup]
+2026-11-10T20:36:55.8451676Z (node:2432) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-10T20:36:55.8452660Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-10T20:36:56.0219613Z Cache not found for input keys: buildcache-Linux-github-73f0fed9d89e35a189df856d11c94b6d1de5cd2cda1dfdde5e3221cd954c5b82, buildcache-Linux-github-, buildcache-Linux-
