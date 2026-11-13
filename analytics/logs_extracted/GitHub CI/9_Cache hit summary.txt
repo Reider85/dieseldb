@@ -1,0 +1,16 @@
+﻿2026-11-10T20:40:20.5875230Z ##[group]Run HIT=""
+2026-11-10T20:40:20.5875508Z [36;1mHIT=""[0m
+2026-11-10T20:40:20.5875738Z [36;1mif [ "$HIT" = "true" ]; then[0m
+2026-11-10T20:40:20.5876058Z [36;1m  echo "Build-cache HIT (exact key)"[0m
+2026-11-10T20:40:20.5876374Z [36;1melif [ -n "$HIT" ]; then[0m
+2026-11-10T20:40:20.5876972Z [36;1m  echo "Build-cache PARTIAL HIT (restore-keys fallback)"[0m
+2026-11-10T20:40:20.5877331Z [36;1melse[0m
+2026-11-10T20:40:20.5877607Z [36;1m  echo "Build-cache MISS - first run for this key"[0m
+2026-11-10T20:40:20.5877928Z [36;1mfi[0m
+2026-11-10T20:40:20.5899369Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:40:20.5899624Z env:
+2026-11-10T20:40:20.5899849Z   MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+2026-11-10T20:40:20.5900233Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:40:20.5900739Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:40:20.5901124Z ##[endgroup]
+2026-11-10T20:40:20.5945717Z Build-cache MISS - first run for this key

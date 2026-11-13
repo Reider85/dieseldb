@@ -1,0 +1,36 @@
+﻿2026-11-10T20:36:54.9225999Z ##[warning]Unexpected input(s) 'build-cache', valid inputs are ['java-version', 'java-version-file', 'distribution', 'java-package', 'architecture', 'jdkFile', 'check-latest', 'server-id', 'server-username', 'server-password', 'settings-path', 'overwrite-settings', 'gpg-private-key', 'gpg-passphrase', 'cache', 'cache-dependency-path', 'job-status', 'token', 'mvn-toolchain-id', 'mvn-toolchain-vendor']
+2026-11-10T20:36:54.9240821Z ##[group]Run actions/setup-java@v4
+2026-11-10T20:36:54.9241189Z with:
+2026-11-10T20:36:54.9241472Z   distribution: temurin
+2026-11-10T20:36:54.9241781Z   java-version: 21
+2026-11-10T20:36:54.9242055Z   cache: maven
+2026-11-10T20:36:54.9242325Z   build-cache: true
+2026-11-10T20:36:54.9242605Z   java-package: jdk
+2026-11-10T20:36:54.9242884Z   check-latest: false
+2026-11-10T20:36:54.9243172Z   server-id: github
+2026-11-10T20:36:54.9243473Z   server-username: GITHUB_ACTOR
+2026-11-10T20:36:54.9243823Z   server-password: GITHUB_TOKEN
+2026-11-10T20:36:54.9244157Z   overwrite-settings: true
+2026-11-10T20:36:54.9244522Z   job-status: success
+2026-11-10T20:36:54.9247660Z   token: ***
+2026-11-10T20:36:54.9247966Z env:
+2026-11-10T20:36:54.9248297Z   MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+2026-11-10T20:36:54.9248649Z ##[endgroup]
+2026-11-10T20:36:55.1058411Z ##[warning]setup-java v4 is deprecated and will no longer receive updates. Please migrate to actions/setup-java@v5.
+2026-11-10T20:36:55.1060268Z ##[group]Installed distributions
+2026-11-10T20:36:55.1110930Z Resolved Java 21.0.13+9 from tool-cache
+2026-11-10T20:36:55.1111439Z Setting Java 21.0.13+9 as the default
+2026-11-10T20:36:55.1122142Z (node:2406) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-10T20:36:55.1122922Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-10T20:36:55.1125994Z Creating toolchains.xml for JDK version 21 from temurin
+2026-11-10T20:36:55.1199715Z Writing to /home/runner/.m2/toolchains.xml
+2026-11-10T20:36:55.1200281Z 
+2026-11-10T20:36:55.1200516Z Java configuration:
+2026-11-10T20:36:55.1200955Z   Distribution: temurin
+2026-11-10T20:36:55.1201430Z   Version: 21.0.13+9
+2026-11-10T20:36:55.1202045Z   Path: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:36:55.1202589Z 
+2026-11-10T20:36:55.1203336Z ##[endgroup]
+2026-11-10T20:36:55.1229085Z Creating settings.xml with server-id: github
+2026-11-10T20:36:55.1277230Z Writing to /home/runner/.m2/settings.xml
+2026-11-10T20:36:55.4393856Z maven cache is not found

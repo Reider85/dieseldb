@@ -1,0 +1,48 @@
+﻿2026-11-10T20:40:26.7944726Z Current runner version: '2.338.2'
+2026-11-10T20:40:26.7969409Z ##[group]Runner Image Provisioner
+2026-11-10T20:40:26.7970665Z Hosted Compute Agent
+2026-11-10T20:40:26.7971281Z Version: 20261028.624
+2026-11-10T20:40:26.7972074Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T20:40:26.7972817Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T20:40:26.7973568Z Worker ID: {07eecd93-62ad-4251-ac6a-cb63ae408ab3}
+2026-11-10T20:40:26.7974337Z Region: westcentralus
+2026-11-10T20:40:26.7974976Z Cloud: Azure
+2026-11-10T20:40:26.7975678Z ##[endgroup]
+2026-11-10T20:40:26.7977423Z ##[group]Operating System
+2026-11-10T20:40:26.7978097Z Ubuntu
+2026-11-10T20:40:26.7978778Z 24.04.5
+2026-11-10T20:40:26.7979312Z LTS
+2026-11-10T20:40:26.7980165Z ##[endgroup]
+2026-11-10T20:40:26.7980785Z ##[group]Runner Image
+2026-11-10T20:40:26.7981400Z Image: ubuntu-24.04
+2026-11-10T20:40:26.7982077Z Version: 20261101.360.1
+2026-11-10T20:40:26.7983205Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-10T20:40:26.7985100Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-10T20:40:26.7986077Z ##[endgroup]
+2026-11-10T20:40:26.7989257Z ##[group]GITHUB_TOKEN Permissions
+2026-11-10T20:40:26.7992381Z Actions: write
+2026-11-10T20:40:26.7993066Z ArtifactMetadata: write
+2026-11-10T20:40:26.7993703Z Attestations: write
+2026-11-10T20:40:26.7994655Z Checks: write
+2026-11-10T20:40:26.7995262Z CodeQuality: write
+2026-11-10T20:40:26.7995863Z Contents: write
+2026-11-10T20:40:26.7996515Z CopilotRequests: write
+2026-11-10T20:40:26.7997141Z Deployments: write
+2026-11-10T20:40:26.7997767Z Discussions: write
+2026-11-10T20:40:26.7998448Z Drives: write
+2026-11-10T20:40:26.7998984Z Issues: write
+2026-11-10T20:40:26.7999734Z Metadata: read
+2026-11-10T20:40:26.8000569Z Models: read
+2026-11-10T20:40:26.8001192Z Packages: write
+2026-11-10T20:40:26.8001797Z Pages: write
+2026-11-10T20:40:26.8002401Z PullRequests: write
+2026-11-10T20:40:26.8003134Z RepositoryProjects: write
+2026-11-10T20:40:26.8003981Z SecurityEvents: write
+2026-11-10T20:40:26.8004690Z Statuses: write
+2026-11-10T20:40:26.8005366Z VulnerabilityAlerts: read
+2026-11-10T20:40:26.8005993Z ##[endgroup]
+2026-11-10T20:40:26.8008401Z Secret source: Actions
+2026-11-10T20:40:26.8009389Z Cache mode: write
+2026-11-10T20:40:26.8010611Z Prepare workflow directory
+2026-11-10T20:40:26.8361908Z Prepare all required actions
+2026-11-10T20:40:26.8463722Z Complete job name: CI Summary

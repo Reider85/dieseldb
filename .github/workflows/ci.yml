@@ -832,15 +832,15 @@ jobs:
           echo "| nightly-flaky | ${{ needs.nightly-flaky.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| profile-stability | ${{ needs.profile-stability.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| manual | ${{ needs.manual.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| lint-tia-mapping | ${{ needs.lint-tia-mapping.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| release-gate | ${{ needs.release-gate.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| ci-failure-issue | ${{ needs.ci-failure-issue.result }} |" >> $GITHUB_STEP_SUMMARY
-          "" >> $GITHUB_STEP_SUMMARY
-          echo "## Optimization Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- Maven parallelism: 4 threads" >> $GITHUB_STEP_SUMMARY
-          echo "- Maven build cache: enabled" >> $GITHUB_STEP_SUMMARY
-          echo "- Cross-JDK testing: 21, 22, 23-ea" >> $GITHUB_STEP_SUMMARY
-          echo "- Cross-OS testing: ubuntu, macos, windows" >> $GITHUB_STEP_SUMMARY
-          echo "- Storage matrix: csv, tsv, jsonl, avro" >> $GITHUB_STEP_SUMMARY
-          echo "- Artifacts on failure only: optimized" >> $GITHUB_STEP_SUMMARY
-          echo "- Expected runner-minutes reduction: 70%" >> $GITHUB_STEP_SUMMARY
+           echo "| lint-tia-mapping | ${{ needs.lint-tia-mapping.result }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| release-gate | ${{ needs.release-gate.result }} |" >> $GITHUB_STEP_SUMMARY
+           echo "| ci-failure-issue | ${{ needs.ci-failure-issue.result }} |" >> $GITHUB_STEP_SUMMARY
+           echo "" >> $GITHUB_STEP_SUMMARY
+           echo "## Optimization Summary" >> $GITHUB_STEP_SUMMARY
+           echo "- Maven parallelism: 4 threads" >> $GITHUB_STEP_SUMMARY
+           echo "- Maven build cache: enabled" >> $GITHUB_STEP_SUMMARY
+           echo "- Cross-JDK testing: 21, 22, 23-ea" >> $GITHUB_STEP_SUMMARY
+           echo "- Cross-OS testing: ubuntu, macos, windows" >> $GITHUB_STEP_SUMMARY
+           echo "- Storage matrix: csv, tsv, jsonl, avro" >> $GITHUB_STEP_SUMMARY
+           echo "- Artifacts on failure only: optimized" >> $GITHUB_STEP_SUMMARY
+           echo "- Expected runner-minutes reduction: 70%" >> $GITHUB_STEP_SUMMARY

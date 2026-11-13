@@ -1,0 +1,15 @@
+﻿2026-11-10T20:36:45.4783406Z ##[group]Run # Determine mode based on input
+2026-11-10T20:36:45.4784552Z [36;1m# Determine mode based on input[0m
+2026-11-10T20:36:45.4785459Z [36;1mif [ "" = "local" ]; then[0m
+2026-11-10T20:36:45.4786360Z [36;1m  echo "use_local=true" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4787343Z [36;1m  echo "Mode: Manual override to local"[0m
+2026-11-10T20:36:45.4788329Z [36;1melif [ "" = "github" ]; then[0m
+2026-11-10T20:36:45.4789213Z [36;1m  echo "use_local=false" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4790454Z [36;1m  echo "Mode: Manual override to GitHub"[0m
+2026-11-10T20:36:45.4791370Z [36;1melse[0m
+2026-11-10T20:36:45.4792204Z [36;1m  echo "use_local=false" >> $GITHUB_OUTPUT[0m
+2026-11-10T20:36:45.4793254Z [36;1m  echo "Mode: Auto - using GitHub Actions"[0m
+2026-11-10T20:36:45.4794117Z [36;1mfi[0m
+2026-11-10T20:36:45.7240582Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:36:45.7241507Z ##[endgroup]
+2026-11-10T20:36:45.7458763Z Mode: Auto - using GitHub Actions

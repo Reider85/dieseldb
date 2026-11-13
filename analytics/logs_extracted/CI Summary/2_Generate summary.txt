@@ -1,0 +1,28 @@
+﻿2026-11-10T20:40:26.9578041Z ##[group]Run echo "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY
+2026-11-10T20:40:26.9579171Z [36;1mecho "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9580464Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9581289Z [36;1mecho "| Job | Status | Mode |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9582246Z [36;1mecho "|---|---|---|" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9583216Z [36;1mecho "| Check Limits | success | Auto-detect |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9584257Z [36;1mecho "| GitHub CI | failure | GitHub |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9585303Z [36;1mecho "| Local CI | skipped | Skipped |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9586159Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9586923Z [36;1mecho "## CI Mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9587783Z [36;1mecho "- Mode: GitHub Actions" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9588646Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9589455Z [36;1mecho "## Test Results" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9590674Z [36;1mecho "- Coverage reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9591897Z [36;1mecho "- Test reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9593193Z [36;1m"" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9593977Z [36;1mecho "## Next Steps" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9594964Z [36;1mif [ "false" = "true" ]; then[0m
+2026-11-10T20:40:26.9595960Z [36;1m  echo "- ⚠️  Running in local fallback mode due to GitHub limits" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9597309Z [36;1m  echo "- 🔄 Full GitHub CI will resume when capacity is available" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9598278Z [36;1melse[0m
+2026-11-10T20:40:26.9599016Z [36;1m  echo "- ✅ Running in normal GitHub CI mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9600311Z [36;1m  echo "- 📊 Full test coverage and security scanning active" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-10T20:40:26.9601306Z [36;1mfi[0m
+2026-11-10T20:40:26.9879586Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:40:26.9880893Z ##[endgroup]
+2026-11-10T20:40:27.0257697Z /home/runner/work/_temp/18c834ae-9cf8-43d1-9052-e40710ed6816.sh: line 8: : command not found
+2026-11-10T20:40:27.0276108Z ##[error]Process completed with exit code 127.

@@ -1,0 +1,51 @@
+﻿2026-11-10T20:36:56.0339801Z ##[group]Run mvn -B -T 4 --no-transfer-progress -Dstyle.color=never compile -P all -DskipTests
+2026-11-10T20:36:56.0340620Z [36;1mmvn -B -T 4 --no-transfer-progress -Dstyle.color=never compile -P all -DskipTests[0m
+2026-11-10T20:36:56.0365236Z shell: /usr/bin/bash -e {0}
+2026-11-10T20:36:56.0365513Z env:
+2026-11-10T20:36:56.0365738Z   MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+2026-11-10T20:36:56.0366122Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:36:56.0366630Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-10T20:36:56.0367338Z ##[endgroup]
+2026-11-10T20:36:59.6583821Z [INFO] Scanning for projects...
+2026-11-10T20:37:01.8976607Z [INFO] Loaded 24443 auto-discovered prefixes for remote repository central (prefixes-central.txt)
+2026-11-10T20:37:02.5948982Z [INFO] Loaded 64 auto-discovered prefixes for remote repository apache.snapshots (prefixes-apache.snapshots.txt)
+2026-11-10T20:37:04.0323517Z [INFO] Loading cache configuration from /home/runner/work/dieseldb/dieseldb/.mvn/maven-build-cache-config.xml
+2026-11-10T20:37:04.0450116Z [INFO] Using XX hash algorithm for cache
+2026-11-10T20:37:04.0543274Z [INFO] 
+2026-11-10T20:37:04.0544408Z [INFO] Using the MultiThreadedBuilder implementation with a thread count of 4
+2026-11-10T20:37:04.0572817Z [INFO] 
+2026-11-10T20:37:04.0574510Z [INFO] -----------------------< com.dieseldb:dieseldb >------------------------
+2026-11-10T20:37:04.0575502Z [INFO] Building dieseldb 3.4.32
+2026-11-10T20:37:04.0576308Z [INFO]   from pom.xml
+2026-11-10T20:37:04.0577269Z [INFO] --------------------------------[ jar ]---------------------------------
+2026-11-10T20:37:05.4368756Z [INFO] Going to calculate checksum for project [groupId=com.dieseldb, artifactId=dieseldb]
+2026-11-10T20:37:05.4793684Z [INFO] Scanning plugins configurations to find input files. Probing is enabled, values will be checked for presence in file system
+2026-11-10T20:37:05.4899339Z [INFO] Found 842 input files. Project dir processing: 30, plugins: 6 millis
+2026-11-10T20:37:05.7385658Z [INFO] Project inputs calculated in 52 ms. XX checksum [f59da1311edf9423] calculated in 248 ms.
+2026-11-10T20:37:05.7408151Z [INFO] Attempting to restore project com.dieseldb:dieseldb from build cache
+2026-11-10T20:37:05.7408935Z [INFO] Remote cache is incomplete or missing, trying local build for com.dieseldb:dieseldb
+2026-11-10T20:37:05.7409643Z [INFO] Local build was not found by checksum f59da1311edf9423 for com.dieseldb:dieseldb
+2026-11-10T20:37:07.3827839Z [WARNING] Could not transfer metadata /.meta/prefixes.txt from/to jvnet-nexus-releases (https://maven.java.net/content/repositories/releases/): (certificate_unknown) PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target
+2026-11-10T20:37:08.2912826Z [INFO] 
+2026-11-10T20:37:08.2916495Z [INFO] --- jacoco:0.8.11:prepare-agent (default) @ dieseldb ---
+2026-11-10T20:37:08.8555167Z [INFO] argLine set to -javaagent:/home/runner/.m2/repository/org/jacoco/org.jacoco.agent/0.8.11/org.jacoco.agent-0.8.11-runtime.jar=destfile=/home/runner/work/dieseldb/dieseldb/target/jacoco.exec
+2026-11-10T20:37:08.8558772Z [INFO] 
+2026-11-10T20:37:08.8559902Z [INFO] --- avro:1.12.0:schema (default) @ dieseldb ---
+2026-11-10T20:37:09.4352779Z [INFO] 
+2026-11-10T20:37:09.4353672Z [INFO] --- resources:3.5.0:resources (default-resources) @ dieseldb ---
+2026-11-10T20:37:09.9238214Z [INFO] Copying 1 resource from src/main/resources to target/classes
+2026-11-10T20:37:09.9294118Z [INFO] 
+2026-11-10T20:37:09.9295248Z [INFO] --- compiler:3.13.0:compile (default-compile) @ dieseldb ---
+2026-11-10T20:37:10.4868694Z [INFO] Recompiling the module because of changed source code.
+2026-11-10T20:37:10.5017088Z [INFO] Compiling 449 source files with javac [debug target 21] to target/classes
+2026-11-10T20:37:17.8079857Z [WARNING] using incubating module(s): jdk.incubator.vector
+2026-11-10T20:37:17.8098914Z [INFO] /home/runner/work/dieseldb/dieseldb/diesel/storage/avro/AvroSchemaManager.java: /home/runner/work/dieseldb/dieseldb/diesel/storage/avro/AvroSchemaManager.java uses or overrides a deprecated API.
+2026-11-10T20:37:17.8128783Z [INFO] /home/runner/work/dieseldb/dieseldb/diesel/storage/avro/AvroSchemaManager.java: Recompile with -Xlint:deprecation for details.
+2026-11-10T20:37:17.8134749Z [INFO] /home/runner/work/dieseldb/dieseldb/diesel/Table.java: Some input files use unchecked or unsafe operations.
+2026-11-10T20:37:17.8136161Z [INFO] /home/runner/work/dieseldb/dieseldb/diesel/Table.java: Recompile with -Xlint:unchecked for details.
+2026-11-10T20:37:17.8323752Z [INFO] ------------------------------------------------------------------------
+2026-11-10T20:37:17.8335684Z [INFO] BUILD SUCCESS
+2026-11-10T20:37:17.8336107Z [INFO] ------------------------------------------------------------------------
+2026-11-10T20:37:17.8336517Z [INFO] Total time:  18.239 s (Wall Clock)
+2026-11-10T20:37:17.8337100Z [INFO] Finished at: 2026-11-10T20:37:17Z
+2026-11-10T20:37:17.8989681Z [INFO] ------------------------------------------------------------------------
