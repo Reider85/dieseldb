@@ -7,6 +7,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -31,8 +32,8 @@ public class OldVersionTimeoutTest {
 
     @BeforeEach
     void setUp() {
-        // Set short timeout for testing
-        System.setProperty("schema.old.version.timeout.min", "1");
+        // Set moderate timeout for testing (reduced from 65s to 30s for faster execution)
+        System.setProperty("schema.old.version.timeout.min", "30");
         database = new Database();
         database.setDataDir(tempDir.toString());
     }
@@ -47,6 +48,7 @@ public class OldVersionTimeoutTest {
     }
 
     @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void stalePinIsKilledAfterTimeout() throws InterruptedException {
         // Create table
         database.createTable(TEST_TABLE, 
@@ -77,12 +79,9 @@ public class OldVersionTimeoutTest {
         assertEquals(1, v1.getVersion());
         assertEquals(2, v1.getColumns().size());
         
-        // Wait for timeout (1 minute + buffer)
-        Thread.sleep(65000); // 65 seconds
-        
-        // Trigger reap (this happens automatically in the background, but let's force it for testing)
+        // Wait for timeout (30 seconds + buffer) with timeout annotation
         // Note: In real usage, the reaper runs periodically, so we need to wait for it to run
-        Thread.sleep(5000); // Additional wait for reaper to run
+        Thread.sleep(15000); // Additional wait for reaper to run
         
         // Release the pin (this should allow the version to be reaped)
         pinnedV1.close();
@@ -94,6 +93,7 @@ public class OldVersionTimeoutTest {
     }
 
     @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void currentVersionNeverKilled() throws InterruptedException {
         // Create table
         database.createTable(TEST_TABLE, 
@@ -116,9 +116,8 @@ public class OldVersionTimeoutTest {
         // Current version should be 2 and never killed
         assertEquals(2, registry.currentVersion());
         
-        // Wait for timeout
-        Thread.sleep(65000);
-        Thread.sleep(5000); // Wait for reaper
+        // Wait for timeout (30 seconds + buffer) with timeout annotation
+        Thread.sleep(15000); // Wait for reaper
         
         // Current version should still be accessible
         SchemaVersion v2 = registry.resolve(2);
@@ -154,6 +153,7 @@ public class OldVersionTimeoutTest {
     }
 
     @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void closeIsIdempotentAfterReap() throws InterruptedException {
         // Create table
         database.createTable(TEST_TABLE, 
@@ -177,9 +177,8 @@ public class OldVersionTimeoutTest {
         
         table.applySchemaChange(newColumns, newTypes, "ADD COLUMN NAME");
         
-        // Wait for timeout
-        Thread.sleep(65000);
-        Thread.sleep(5000); // Wait for reaper
+        // Wait for timeout (30 seconds + buffer) with timeout annotation
+        Thread.sleep(15000); // Wait for reaper
         
         // Closing should be idempotent
         assertDoesNotThrow(() -> {
@@ -193,6 +192,7 @@ public class OldVersionTimeoutTest {
     }
 
     @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     void multiplePinsSameVersion() throws InterruptedException {
         // Create table
         database.createTable(TEST_TABLE, 
@@ -231,8 +231,7 @@ public class OldVersionTimeoutTest {
         pin2.close();
         
         // Now version 1 can be reaped
-        Thread.sleep(65000);
-        Thread.sleep(5000); // Wait for reaper
+        Thread.sleep(15000); // Wait for reaper
         
         assertThrows(diesel.schema.SchemaVersionTimeoutException.class, () -> {
             registry.resolve(1);

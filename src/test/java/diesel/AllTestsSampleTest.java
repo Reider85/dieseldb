@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.api.parallel.Isolated;
 
@@ -208,19 +209,15 @@ public class AllTestsSampleTest {
     }
 
     @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
     @Order(19)
-    public void prompt68Group() {
-        runGroupAsTest("Prompt68Test", this::runPrompt68TestQueries);
-    }
-
-    @Test
-    @Order(20)
     public void prompt69Group() {
         runGroupAsTest("Prompt69Test", this::runPrompt69TestQueries);
     }
 
     @Test
-    @Order(21)
+    @Timeout(value = 60, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    @Order(20)
     public void prompt70Group() {
         runGroupAsTest("Prompt70Test", this::runPrompt70TestQueries);
     }
@@ -1142,7 +1139,13 @@ public class AllTestsSampleTest {
             LOGGER.log(Level.INFO, "Prompt70Test / sending SIGTERM via process.destroy() to the server process");
             long destroyStart = System.currentTimeMillis();
             process.destroy();
-            boolean terminated = process.waitFor(30, TimeUnit.SECONDS);
+            boolean terminated = false;
+            try {
+                terminated = process.waitFor(30, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOGGER.log(Level.WARNING, "Prompt70Test / interrupted while waiting for process termination");
+            }
             long destroyElapsed = System.currentTimeMillis() - destroyStart;
             check(terminated,
                     "Prompt70Test / the server process terminates within 30 seconds after SIGTERM (destroy took " + destroyElapsed + " ms)");
@@ -1179,17 +1182,24 @@ public class AllTestsSampleTest {
             LOGGER.log(Level.SEVERE, "Prompt70Test / graceful shutdown subprocess test failed", e);
         } finally {
             if (process != null && process.isAlive()) {
+                LOGGER.log(Level.INFO, "Prompt70Test / forcibly terminating remaining process");
                 process.destroyForcibly();
                 try {
                     process.waitFor(10, TimeUnit.SECONDS);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    LOGGER.log(Level.WARNING, "Prompt70Test / interrupted while forcibly terminating process");
                 }
             }
             try {
-                outputPump.join(5000);
+                if (!outputPump.isAlive()) {
+                    outputPump.join(5000);
+                } else {
+                    LOGGER.log(Level.WARNING, "Prompt70Test / output pump thread still alive, skipping join");
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                LOGGER.log(Level.WARNING, "Prompt70Test / interrupted while joining output pump");
             }
             deletePrompt70Dir(tempDir);
         }

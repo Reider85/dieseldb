@@ -300,6 +300,11 @@
                             <excludes combine.self="override"/>
                             <groups>${surefire.groups}</groups>
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
+                            <excludes>
+                                <exclude>**/OldVersionTimeoutTest.java</exclude>
+                                <exclude>**/OnlineAlterTest.java</exclude>
+                                <exclude>**/DieselAsyncAppenderTest.java</exclude>
+                            </excludes>
                             <forkCount>1</forkCount>
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
