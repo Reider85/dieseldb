@@ -639,7 +639,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: stability-${{{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}-reports
+          name: stability-${{ matrix.profile }}-${{ matrix.os }}-${{ matrix.jdk }}-reports
           path: target/surefire-reports/
           retention-days: 30
 
