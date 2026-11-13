@@ -1008,7 +1008,8 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.28 Prompt5 #5: GitHub Trending strategy implementation
 3.4.29 docs: implement prompt 6 - GitHub Pages + auto-changelog + status badges
 3.4.30 Prompt7 #7: Implement engagement loop with community tools
-
 3.4.31 fix(ci): repair release-on-push.yml YAML and ci.yml paths filter
-
 3.4.32 Remove hardcoded DEBUG System.out.println calls that ignore logging configuration
+3.4.33 ci: fix YAML in codeql.yml, paths-ignore in hybrid-ci.yml, setup-java build-cache, test-reporter permissions, timeout, release-on-push test-skip
+3.4.34 Fix YAML parse error in GitHub Actions workflow
+3.4.35 ci: fix all GitHub Actions workflow YAML syntax and configuration issues

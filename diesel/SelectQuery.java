@@ -32,6 +32,7 @@ import diesel.storage.json.JsonParserConfig;
 import diesel.storage.json.JsonPathResolver;
 import diesel.storage.avro.AvroQueryExecutor;
 import diesel.storage.avro.AvroRowStorage;
+import diesel.ErrorMessages;
 
 /**
  * Executes a SELECT statement against a table: applies WHERE conditions

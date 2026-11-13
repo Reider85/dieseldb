@@ -70,7 +70,7 @@ class CsvLargeFileStressTest {
     @Test
     void storageLoadLargeDataset() throws Exception {
         int rows = 50_000;
-        File csvFile = new File(tempDir, "large.csv");
+        File csvFile = new File(tempDir, "LARGE.csv");
         try (BufferedWriter bw = Files.newBufferedWriter(csvFile.toPath(), StandardCharsets.UTF_8)) {
             bw.write("ID,NAME,VALUE,FLAG\n");
             for (int i = 0; i < rows; i++) {
