@@ -18,7 +18,7 @@ jobs:
         uses: peter-evans/create-issue-from-file@v5
         with:
           title: "Welcome to DieselDB Discussions"
-          content-filepath: .github/discussions/welcome.md
+          body-filepath: .github/discussions/welcome.md
           labels: "welcome,announcement"
           
       - name: Create Roadmap Discussion
@@ -26,7 +26,7 @@ jobs:
         uses: peter-evans/create-issue-from-file@v5
         with:
           title: "Roadmap v3.5 / v4.0 — what's planned"
-          content-filepath: .github/discussions/roadmap.md
+          body-filepath: .github/discussions/roadmap.md
           labels: "roadmap,planning"
           
       - name: Create Use Cases Discussion
@@ -34,18 +34,7 @@ jobs:
         uses: peter-evans/create-issue-from-file@v5
         with:
           title: "Use cases — share yours!"
-          content-filepath: .github/discussions/use-cases.md
+          body-filepath: .github/discussions/use-cases.md
           labels: "use-cases,community"
 
-      - name: Create Good First Issue Welcome
-        if: ${{ github.event.inputs.discussion_type == 'welcome' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: "Getting Started with DieselDB — Good First Issues",
-              body: file://.github/discussions/good-first-issue-welcome.md,
-              labels: ["good first issue", "help wanted", "documentation"]
-            })
+      

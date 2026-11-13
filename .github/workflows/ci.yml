@@ -73,11 +73,15 @@ jobs:
   fast:
     name: fast
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     if: github.event_name == 'push'
     needs: compile-gate
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +91,6 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -194,7 +197,6 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -300,7 +302,7 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -376,7 +378,7 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -447,7 +449,7 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache-flaky
@@ -537,7 +539,7 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache-storage
@@ -590,7 +592,7 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache-stability
@@ -657,7 +659,7 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -716,7 +718,7 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
-          build-cache: true
+          
 
       - name: Cache Maven build-cache
         id: cache-buildcache
@@ -814,7 +816,7 @@ jobs:
     name: Workflow Summary
     runs-on: ubuntu-24.04
     if: always()
-    needs: [compile-gate, fast, pr-gate-tia, pr-gate, nightly, nightly-flaky, profile-stability, manual, release-gate, ci-failure-issue]
+    needs: [compile-gate, fast, pr-gate-tia, pr-gate, nightly, nightly-flaky, profile-stability, manual, release-gate, ci-failure-issue, lint-tia-mapping]
     steps:
       - name: Generate summary
         run: |
@@ -830,6 +832,7 @@ jobs:
           echo "| nightly-flaky | ${{ needs.nightly-flaky.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| profile-stability | ${{ needs.profile-stability.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| manual | ${{ needs.manual.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| lint-tia-mapping | ${{ needs.lint-tia-mapping.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| release-gate | ${{ needs.release-gate.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ci-failure-issue | ${{ needs.ci-failure-issue.result }} |" >> $GITHUB_STEP_SUMMARY
           "" >> $GITHUB_STEP_SUMMARY

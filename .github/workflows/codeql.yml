@@ -25,6 +25,10 @@ jobs:
       contents: read
       security-events: write
     
+    strategy:
+      matrix:
+        language: [java]
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -40,28 +44,17 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
-          languages: ${{ matrix.language }}
-        
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
       - name: Build with Maven
         run: |
           mvn -B --no-transfer-progress -Dstyle.color=never compile -DskipTests
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/perform-analysis@v3
+        uses: github/codeql-action/analyze@v3
         with:
           category: "language"
           language: ${{ matrix.language }}
           auto-build: true
-
-      - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: codeql-repos/*/codeql-analysis*.sarif
-          category: security
 
   dependency-scan:
     name: Dependency Vulnerability Scan
@@ -123,23 +116,7 @@ jobs:
               echo "Creating GitHub issue..."
               
               # Create issue body
-              cat > vulnerability-issue.md << EOF
-## Security Vulnerability Alert
-
-The dependency scan detected **$HIGH_COUNT** high or critical vulnerabilities that require attention.
-
-### Next Steps
-1. Review the detailed scan results in the artifacts
-2. Update dependencies to resolve vulnerabilities
-3. Re-run the security scan after fixes
-
-### Artifacts
-- [Dependency Check Report](dependency-check-report.html)
-- [CodeQL Analysis Results](codeql-repos/*/codeql-analysis*.sarif)
-
-### Automatic Detection
-This issue was automatically created by GitHub Actions when high/critical vulnerabilities were detected.
-EOF
+              printf "## Security Vulnerability Alert\n\nThe dependency scan detected **$HIGH_COUNT** high or critical vulnerabilities that require attention.\n\n### Next Steps\n1. Review the detailed scan results in the artifacts\n2. Update dependencies to resolve vulnerabilities\n3. Re-run the security scan after fixes\n\n### Artifacts\n- [Dependency Check Report](dependency-check-report.html)\n- [CodeQL Analysis Results](codeql-repos/*/codeql-analysis*.sarif)\n\n### Automatic Detection\nThis issue was automatically created by GitHub Actions when high/critical vulnerabilities were detected.\n" > vulnerability-issue.md
 
               # Create issue
               gh issue create \

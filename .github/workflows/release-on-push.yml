@@ -83,7 +83,13 @@ jobs:
       - name: Build JAR
         if: steps.guard.outputs.exists == 'false'
         shell: bash
-        run: mvn -B package -DskipTests -T 4 --no-transfer-progress 2>&1 | tee build.log
+        run: mvn -B package -Dmaven.test.skip=true -T 4 --no-transfer-progress 2>&1 | tee build.log
+
+      - name: Verify JAR exists
+        if: steps.guard.outputs.exists == 'false'
+        run: |
+          ls -la target/*.jar
+          test -n "$(ls target/*.jar 2>/dev/null)" || { echo "No JAR produced"; exit 1; }
 
       - name: Print build failure diagnosis (last 50 lines)
         if: failure()
@@ -133,3 +139,11 @@ jobs:
             ---
 
             ⭐ **Star this repo if you find DieselDB useful** — it helps others discover it and supports the open-source community!
+
+      - name: Release summary
+        if: success()
+        run: |
+          echo "## Release published" >> $GITHUB_STEP_SUMMARY
+          echo "- Tag: ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- JAR: $(ls target/*.jar)" >> $GITHUB_STEP_SUMMARY
+          echo "- Javadoc: ${{ steps.javadoc-link.outputs.javadoc_url }}" >> $GITHUB_STEP_SUMMARY

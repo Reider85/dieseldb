@@ -8,11 +8,10 @@ on:
       - 'diesel/**'
       - '.github/workflows/**'
       - 'scripts/**'
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - 'NOTICE'
+      - '!**/*.md'
+      - '!docs/**'
+      - '!LICENSE'
+      - '!NOTICE'
   pull_request:
     branches: [ main ]
     paths:
@@ -44,34 +43,19 @@ jobs:
       usage_percentage: ${{ steps.check.outputs.usage_percentage }}
     
     steps:
-      - name: Check GitHub usage
+      - name: Set CI mode
         id: check
         run: |
-          echo "Checking GitHub Actions usage..."
-          
-          # Get current usage
-          CURRENT_USAGE=$(gh api /repos/${{ github.repository }}/actions/runs --jq '.total_count' 2>/dev/null || echo "0")
-          MONTHLY_LIMIT=2000
-          
-          # Calculate usage percentage
-          USAGE_PERCENTAGE=$((CURRENT_USAGE * 100 / MONTHLY_LIMIT))
-          
-          echo "current_usage=$CURRENT_USAGE" >> $GITHUB_OUTPUT
-          echo "usage_percentage=$USAGE_PERCENTAGE" >> $GITHUB_OUTPUT
-          
-          # Determine mode
+          # Determine mode based on input
           if [ "${{ github.event.inputs.mode }}" = "local" ]; then
             echo "use_local=true" >> $GITHUB_OUTPUT
             echo "Mode: Manual override to local"
           elif [ "${{ github.event.inputs.mode }}" = "github" ]; then
             echo "use_local=false" >> $GITHUB_OUTPUT
             echo "Mode: Manual override to GitHub"
-          elif [ "$USAGE_PERCENTAGE" -ge 90 ]; then
-            echo "use_local=true" >> $GITHUB_OUTPUT
-            echo "Mode: Auto switch to local (usage: $USAGE_PERCENTAGE%)"
           else
             echo "use_local=false" >> $GITHUB_OUTPUT
-            echo "Mode: Use GitHub (usage: $USAGE_PERCENTAGE%)"
+            echo "Mode: Auto - using GitHub Actions"
           fi
 
   # ──────── GitHub CI Job (Primary) ────────
@@ -146,7 +130,7 @@ jobs:
   # ──────── Local CI Job (Fallback) ────────
   local-ci:
     name: Local CI (Fallback)
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: check-limits
     if: needs.check-limits.outputs.use_local == 'true'
@@ -219,8 +203,7 @@ jobs:
           echo "| GitHub CI | ${{ needs.github-ci.result }} | ${{ needs.check-limits.outputs.use_local == 'false' && 'GitHub' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Local CI | ${{ needs.local-ci.result }} | ${{ needs.check-limits.outputs.use_local == 'true' && 'Local Fallback' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           "" >> $GITHUB_STEP_SUMMARY
-          echo "## GitHub Usage" >> $GITHUB_STEP_SUMMARY
-          echo "- Usage: ${{ needs.check-limits.outputs.usage_percentage }}% of monthly limit" >> $GITHUB_STEP_SUMMARY
+          echo "## CI Mode" >> $GITHUB_STEP_SUMMARY
           echo "- Mode: ${{ needs.check-limits.outputs.use_local == 'true' && 'Local Fallback' || 'GitHub Actions' }}" >> $GITHUB_STEP_SUMMARY
           "" >> $GITHUB_STEP_SUMMARY
           echo "## Test Results" >> $GITHUB_STEP_SUMMARY
