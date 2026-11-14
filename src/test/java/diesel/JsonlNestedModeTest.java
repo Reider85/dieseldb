@@ -242,15 +242,26 @@ class JsonlNestedModeTest {
 
     @Test
     void sqlJsonPathProjectionExtractsLeafInJsonColumnMode() {
-        Database db = new Database();
-        db.executeQuery("CREATE TABLE JPF (ID LONG, PROFL STRING)", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"РњРѕСЃРєРІР°\"}}}')", null);
-        db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"РџР°СЂРёР¶\"}}}')", null);
+        // Set system property to use JSON column mode for this test
+        System.setProperty("jsonl.nested.mode", "JSON_COLUMN");
+        // Verify the system property is set
+        String nestedMode = System.getProperty("jsonl.nested.mode");
+        System.out.println("System property jsonl.nested.mode = " + nestedMode);
+        
+        try {
+            Database db = new Database();
+            db.executeQuery("CREATE TABLE JPF (ID LONG, PROFL STRING)", null);
+            db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (1, '{\"user\":{\"name\":\"Alice\",\"address\":{\"city\":\"РњРѕСЃРєРІР°\"}}}')", null);
+            db.executeQuery("INSERT INTO JPF (ID, PROFL) VALUES (2, '{\"user\":{\"name\":\"Bob\",\"address\":{\"city\":\"РџР°СЂРёР¶\"}}}')", null);
 
-        List<Map<String, Object>> proj = query(db, "SELECT PROFL.user.address.city FROM JPF");
-        assertEquals(2, proj.size());
-        assertEquals("РњРѕСЃРєРІР°", proj.get(0).get("PROFL"));
-        assertEquals("РџР°СЂРёР¶", proj.get(1).get("PROFL"));
+            List<Map<String, Object>> proj = query(db, "SELECT PROFL.user.address.city FROM JPF");
+            assertEquals(2, proj.size());
+            assertEquals("РњРѕСЃРєРІР°", proj.get(0).get("PROFL"));
+            assertEquals("РџР°СЂРёР¶", proj.get(1).get("PROFL"));
+        } finally {
+            // Reset system property
+            System.setProperty("jsonl.nested.mode", "FLATTEN");
+        }
     }
 
     @Test

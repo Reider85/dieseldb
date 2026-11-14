@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import diesel.storage.json.JsonParserConfig;
 
 /**
  * Executes a DELETE statement: removes every row matching the WHERE
@@ -291,7 +292,7 @@ class DeleteQuery implements Query<Void> {
                     // Match against the reader-visible version: a snapshot
                     // reader must not target rows through another writer's
                     // newer values (shadow model, prompt4.md #4).
-                    if (evaluateConditions(table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes, collations)) {
+                    if (evaluateConditions(table, table.getVisibleRowForReader(i, rows.get(i)), conditions, columnTypes, collations)) {
                         rowsToDelete.add(i);
                     }
                 });
@@ -354,8 +355,13 @@ class DeleteQuery implements Query<Void> {
 
     private static final ConditionEvaluator EVAL = new ConditionEvaluator();
 
-    private boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions,
+    private boolean evaluateConditions(Table table, Map<String, Object> row, List<QueryParser.Condition> conditions,
                                        Map<String, Class<?>> columnTypes, Map<String, String> collations) {
-        return EVAL.evaluateConditions(row, conditions, columnTypes, collations);
+        // Get the JsonParserConfig from the table's storage if it's a JsonlRowStorage
+        JsonParserConfig jsonConfig = new JsonParserConfig.Builder().build();
+        if (table.getStorage() instanceof diesel.storage.JsonlRowStorage jsonlStorage) {
+            jsonConfig = jsonlStorage.getConfig();
+        }
+        return EVAL.evaluateConditions(row, conditions, columnTypes, collations, jsonConfig);
     }
 }

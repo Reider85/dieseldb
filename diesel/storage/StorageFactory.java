@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import diesel.storage.avro.AvroRowStorage;
+import diesel.storage.json.JsonParserConfig;
 
 /**
  * Factory for creating {@link RowStorage} implementations by type name.
@@ -52,8 +53,11 @@ public final class StorageFactory {
                 yield new TsvRowStorage(tableName, columns, columnTypes);
             }
             case "jsonl" -> {
-                LOGGER.debug("Creating JsonlRowStorage for table {}", tableName);
-                yield new JsonlRowStorage(tableName, columns, columnTypes);
+                LOGGER.info("Creating JsonlRowStorage for table {}", tableName);
+                JsonParserConfig config = JsonParserConfig.builder().build();
+                LOGGER.info("JsonParserConfig nested mode: {}", config.nestedMode());
+                LOGGER.info("System property jsonl.nested.mode: {}", System.getProperty("jsonl.nested.mode"));
+                yield new JsonlRowStorage(tableName, columns, columnTypes, config);
             }
             case "avro" -> {
                 LOGGER.debug("Creating AvroRowStorage for table {}", tableName);

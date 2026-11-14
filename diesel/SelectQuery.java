@@ -84,13 +84,19 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
      */
     private final Map<String, Pattern> likePatternCache = new HashMap<>();
 
-    /**
-     * Prompt 45: memoizes the JSON Path resolution of each dotted column so
-     * the per-row WHERE/projection lookups collapse to a single hash hit. The
+/**
+     * Memoizes the JSON Path resolution of each dotted column so the
+     * per-row WHERE/projection lookups collapse to a single hash hit. The
      * row key set is constant within one execution, so a resolved path stays
      * valid for every row.
      */
     private final Map<String, JsonPathResolver.ResolvedPath> pathResolutionCache = new HashMap<>();
+
+    /**
+     * JSON configuration for JSON Path extraction. Uses the correct configuration
+     * for the storage type (e.g., JSONL storage specific settings).
+     */
+    private final diesel.storage.json.JsonParserConfig jsonConfig;
 
     /**
      * Pre-resolved SELECT projection, built once per execution so the hot
@@ -421,7 +427,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
                         List<QueryParser.HavingCondition> havingConditions, List<QueryParser.OrderByInfo> orderBy,
                         Integer limit, Integer offset,
                         Map<String, String> tableAliases, Map<String, String> extraTableAliases,
-                        Map<String, Class<?>> columnTypes) {
+                        Map<String, Class<?>> columnTypes, diesel.storage.json.JsonParserConfig jsonConfig) {
         SelectQueryCore core = new SelectQueryCore(tableName, tableAlias, columns, aggregates);
         SelectQueryJoins joinsObj = new SelectQueryJoins(joins);
         SelectQueryWhere where = new SelectQueryWhere(conditions);
@@ -455,6 +461,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (!extra.isEmpty()) {
             this.tableAliases.putAll(extra);
         }
+        // Use provided JSON configuration or default
+        this.jsonConfig = jsonConfig != null ? jsonConfig : diesel.storage.json.JsonParserConfig.defaults();
     }
 
     /**
@@ -465,7 +473,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
     private SelectQuery(SelectQueryCore core, SelectQueryJoins joins,
                         SelectQueryWhere where, SelectQueryGroupBy groupBy,
                         SelectQueryOrderBy orderBy, SelectQueryLimitOffset limitOffset,
-                        SelectQueryMetadata metadata) {
+                        SelectQueryMetadata metadata, diesel.storage.json.JsonParserConfig jsonConfig) {
         this.columns = core.getColumns();
         this.aggregates = core.getAggregates();
         this.conditions = where.getConditions();
@@ -491,6 +499,8 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         if (!extra.isEmpty()) {
             this.tableAliases.putAll(extra);
         }
+        // Use provided JSON configuration or default
+        this.jsonConfig = jsonConfig != null ? jsonConfig : diesel.storage.json.JsonParserConfig.defaults();
     }
 
     /**
@@ -676,6 +686,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
         private Map<String, String> extraTableAliases;
         private Map<String, Class<?>> columnTypes;
         private Map<String, String> groupBySubQueries;
+        private diesel.storage.json.JsonParserConfig jsonConfig;
 
         public Builder tableName(String tableName) {
             this.tableName = tableName;
@@ -747,6 +758,11 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             return this;
         }
 
+        public Builder jsonConfig(diesel.storage.json.JsonParserConfig jsonConfig) {
+            this.jsonConfig = jsonConfig;
+            return this;
+        }
+
         public Builder groupBySubQueries(Map<String, String> groupBySubQueries) {
             this.groupBySubQueries = groupBySubQueries;
             return this;
@@ -761,7 +777,7 @@ class SelectQuery implements Query<List<Map<String, Object>>> {
             SelectQueryLimitOffset limitOffset = new SelectQueryLimitOffset(limit, offset);
             SelectQueryMetadata metadata = new SelectQueryMetadata(tableAliases, extraTableAliases, columnTypes);
             
-            return new SelectQuery(core, joinsObj, where, groupByObj, orderByObj, limitOffset, metadata);
+            return new SelectQuery(core, joinsObj, where, groupByObj, orderByObj, limitOffset, metadata, jsonConfig);
         }
     }
 
@@ -4324,11 +4340,21 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
      * prefix and extract the leaf from its compact JSON text.
      */
     private Object resolveRowValue(Map<String, Object> row, String columnKey) {
-        Object direct = row.get(columnKey);
+        // Strip table prefix if present (e.g., "JPF.PROFL.user.address.city" -> "PROFL.user.address.city")
+        String actualColumnKey = columnKey.contains(".") ? columnKey.split("\\.", 2)[1] : columnKey;
+        
+        // First try to find the column without table prefix
+        Object direct = row.get(actualColumnKey);
         if (direct != null) {
             return direct;
         }
-        JsonPathResolver.ResolvedPath resolved = pathResolutionCache.computeIfAbsent(columnKey, key -> {
+        
+        // If not found, try to find the column with table prefix
+        direct = row.get(columnKey);
+        if (direct != null) {
+            return direct;
+        }
+        JsonPathResolver.ResolvedPath resolved = pathResolutionCache.computeIfAbsent(actualColumnKey, key -> {
             List<String> columns = new ArrayList<>(row.keySet());
             TreeMap<String, Integer> indexByName = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             for (int i = 0; i < columns.size(); i++) {
@@ -4336,6 +4362,34 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
             }
             JsonPathResolver.SchemaIndex schemaIndex = new JsonPathResolver.SchemaIndex(columns, indexByName);
             JsonPathResolver.ResolvedPath resolvedPath = schemaIndex.resolve(key);
+            
+            // If the direct resolution fails, try to find a base column that matches the first part of the key
+            if (resolvedPath.columnIndex() < 0 && key.contains(".")) {
+                String baseColumn = key.split("\\.")[0];
+                
+                // Try to find the base column in the available columns
+                for (String col : columns) {
+                    if (col.equals(baseColumn) || col.endsWith("." + baseColumn)) {
+                        // Create a resolved path for the base column with the remaining parts as JSON segments
+                        String jsonPath = key.substring(key.indexOf(".") + 1);
+                        List<String> segments = Arrays.asList(jsonPath.split("\\."));
+                        resolvedPath = new JsonPathResolver.ResolvedPath(indexByName.get(col), col, segments);
+                        break;
+                    }
+                }
+            }
+            
+            // If we still haven't resolved it and we're in FLATTEN mode, check if there's an exact match for the full key
+            if (resolvedPath.columnIndex() < 0 && jsonConfig != null && jsonConfig.nestedMode() == JsonParserConfig.NestedMode.FLATTEN) {
+                // Look for an exact match of the actualColumnKey in the columns
+                for (String col : columns) {
+                    if (col.equals(actualColumnKey)) {
+                        resolvedPath = new JsonPathResolver.ResolvedPath(indexByName.get(col), col, Collections.emptyList());
+                        break;
+                    }
+                }
+            }
+            
             return resolvedPath.columnIndex() < 0 ? JsonPathResolver.UNRESOLVED : resolvedPath;
         });
         if (resolved.columnIndex() < 0 || resolved.segments().isEmpty()) {
@@ -4343,7 +4397,8 @@ private List<Map<String, Object>> tryCoveringIndex(Table table, Set<Integer> row
         }
         Object baseValue = row.get(resolved.column());
         if (baseValue instanceof String jsonText) {
-            return JsonPathResolver.extract(jsonText, resolved.segments(), JsonParserConfig.defaults());
+            Object result = JsonPathResolver.extract(jsonText, resolved.segments(), jsonConfig);
+            return result;
         }
         return null;
     }

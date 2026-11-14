@@ -1325,4 +1325,9 @@ public class JsonlRowStorage extends AbstractRowStorage {
     public void endBulkUpdate() {
         jsonlIndex().endBulkUpdate();
     }
+
+    /** Returns the JSON configuration used by this storage. */
+    public JsonParserConfig getConfig() {
+        return config;
+    }
 }

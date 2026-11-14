@@ -15,8 +15,9 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 import javax.annotation.Nonnull;
 import diesel.security.Privilege;
-import diesel.replication.Publication;
-import diesel.replication.Subscription;
+    import diesel.replication.Publication;
+    import diesel.replication.Subscription;
+    import diesel.storage.RowStorage;
 
 /**
  * Parser that turns a SQL string into a {@link Query} execution object.
@@ -2227,6 +2228,20 @@ LOGGER.error("Несбалансированные скобки в запрос�
         
         LOGGER.info("Разобран SELECT-запрос: таблица={}, столбцы={}, агрегации={}, соединения={}, условия={}", phaseContext.tableName, phaseContext.columns, phaseContext.aggregates, phaseContext.joins, phaseContext.conditions);
 
+        // Get the table to check if it's JSONL storage to get the correct JSON configuration
+        Table mainTable = database.getTable(phaseContext.tableName);
+        diesel.storage.json.JsonParserConfig jsonConfig = diesel.storage.json.JsonParserConfig.defaults();
+        
+        if (mainTable != null) {
+            RowStorage storage = mainTable.getStorage();
+            if (storage instanceof diesel.storage.JsonlRowStorage jsonlStorage) {
+                jsonConfig = jsonlStorage.getConfig();
+                LOGGER.info("QueryParser using JsonlRowStorage config with nested mode: {}", jsonConfig.nestedMode());
+            }
+        } else {
+            LOGGER.info("QueryParser using default config with nested mode: {}", jsonConfig.nestedMode());
+        }
+        
         return SelectQuery.builder()
                 .tableName(phaseContext.tableName)
                 .tableAlias(phaseContext.tableAlias)
@@ -2242,6 +2257,7 @@ LOGGER.error("Несбалансированные скобки в запрос�
                 .tableAliases(phaseContext.columnAliases)
                 .extraTableAliases(phaseContext.tableAliases)
                 .columnTypes(phaseContext.combinedColumnTypes)
+                .jsonConfig(jsonConfig)
                 .build();
     }
 

@@ -15,6 +15,7 @@ import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import diesel.storage.json.JsonPathResolver;
+import diesel.storage.json.JsonParserConfig;
 
 /**
  * Shared condition evaluation logic for DELETE, UPDATE, and SELECT queries.
@@ -28,7 +29,7 @@ class ConditionEvaluator {
      * Evaluates a list of conditions using SQL three-valued logic with short-circuit evaluation.
      */
     ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions, Map<String, Class<?>> columnTypes) {
-        return evaluateConditions3vl(row, conditions, columnTypes, java.util.Collections.emptyMap());
+        return evaluateConditions3vl(row, conditions, columnTypes, java.util.Collections.emptyMap(), new JsonParserConfig.Builder().build());
     }
 
     /**
@@ -38,21 +39,21 @@ class ConditionEvaluator {
      * keep the default case-sensitive comparison.
      */
     ThreeValuedLogic evaluateConditions3vl(Map<String, Object> row, List<QueryParser.Condition> conditions,
-                                           Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+                                           Map<String, Class<?>> columnTypes, Map<String, String> collations, JsonParserConfig config) {
         if (conditions.isEmpty()) {
             return TRUE;
         }
-        ThreeValuedLogic result = evaluateCondition3vl(row, conditions.get(0), columnTypes, collations);
+        ThreeValuedLogic result = evaluateCondition3vl(row, conditions.get(0), columnTypes, collations, config);
         for (int i = 1; i < conditions.size(); i++) {
             QueryParser.Condition condition = conditions.get(i);
             String conjunction = condition.conjunction;
             if (Objects.equals(conjunction, SqlKeywords.OR)) {
                 if (!result.orIsDetermined()) {
-                    result = result.or(evaluateCondition3vl(row, condition, columnTypes, collations));
+                    result = result.or(evaluateCondition3vl(row, condition, columnTypes, collations, config));
                 }
             } else if ((conjunction == null || conjunction.equalsIgnoreCase(SqlKeywords.AND))
                     && !result.andIsDetermined()) {
-                result = result.and(evaluateCondition3vl(row, condition, columnTypes, collations));
+                result = result.and(evaluateCondition3vl(row, condition, columnTypes, collations, config));
             }
         }
         return result;
@@ -70,27 +71,32 @@ class ConditionEvaluator {
      */
     boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions,
                                Map<String, Class<?>> columnTypes, Map<String, String> collations) {
-        return evaluateConditions3vl(row, conditions, columnTypes, collations).isTrue();
+        return evaluateConditions3vl(row, conditions, columnTypes, collations, new JsonParserConfig.Builder().build()).isTrue();
+    }
+
+    boolean evaluateConditions(Map<String, Object> row, List<QueryParser.Condition> conditions,
+                               Map<String, Class<?>> columnTypes, Map<String, String> collations, JsonParserConfig config) {
+        return evaluateConditions3vl(row, conditions, columnTypes, collations, config).isTrue();
     }
 
     /**
      * Evaluates a single condition against a row using SQL three-valued logic.
      */
     ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition, Map<String, Class<?>> columnTypes) {
-        return evaluateCondition3vl(row, condition, columnTypes, java.util.Collections.emptyMap());
+        return evaluateCondition3vl(row, condition, columnTypes, java.util.Collections.emptyMap(), new JsonParserConfig.Builder().build());
     }
 
     private ThreeValuedLogic evaluateCondition3vl(Map<String, Object> row, QueryParser.Condition condition,
-                                                  Map<String, Class<?>> columnTypes, Map<String, String> collations) {
+                                                  Map<String, Class<?>> columnTypes, Map<String, String> collations, JsonParserConfig config) {
         if (condition.isGrouped()) {
-            return evaluateGroupedCondition(row, condition, columnTypes, collations);
+            return evaluateGroupedCondition(row, condition, columnTypes, collations, config);
         }
 
         if (condition.isNullOperator()) {
             return evaluateIsNullCondition(row, condition);
         }
 
-        Object rowValue = resolveRowValue(row, condition.column);
+        Object rowValue = resolveRowValue(row, condition.column, config);
         if (rowValue == null) {
             LOGGER.log(Level.FINE, "Row value for column {0} is null, condition is UNKNOWN", condition.column);
             return UNKNOWN;
@@ -121,7 +127,9 @@ class ConditionEvaluator {
      * "PROFL.user.address.city", it extracts the value from the JSON text in
      * the PROFL column.
      */
-    private Object resolveRowValue(Map<String, Object> row, String columnKey) {
+    private Object resolveRowValue(Map<String, Object> row, String columnKey, JsonParserConfig config) {
+        LOGGER.log(Level.INFO, "ConditionEvaluator.resolveRowValue called with columnKey: {0}, nested mode: {1}", 
+                new Object[]{columnKey, config.nestedMode()});
         Object direct = row.get(columnKey);
         if (direct != null) {
             return direct;
@@ -141,8 +149,9 @@ class ConditionEvaluator {
             if (resolved.columnIndex() >= 0 && !resolved.segments().isEmpty()) {
                 Object baseValue = row.get(resolved.column());
                 if (baseValue instanceof String jsonText) {
-                    return JsonPathResolver.extract(jsonText, resolved.segments(), 
-                            new diesel.storage.json.JsonParserConfig.Builder().build());
+                    LOGGER.log(Level.INFO, "ConditionExtractor calling JsonPathResolver.extract with segments: {0}, nested mode: {1}", 
+                            new Object[]{resolved.segments(), config.nestedMode()});
+                    return JsonPathResolver.extract(jsonText, resolved.segments(), config);
                 }
             }
         }
@@ -150,9 +159,9 @@ class ConditionEvaluator {
         return null;
     }
 
-    private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition,
-                                                      Map<String, Class<?>> columnTypes, Map<String, String> collations) {
-        ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes, collations);
+private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, QueryParser.Condition condition,
+                                                       Map<String, Class<?>> columnTypes, Map<String, String> collations, JsonParserConfig config) {
+        ThreeValuedLogic subResult = evaluateConditions3vl(row, condition.subConditions, columnTypes, collations, config);
         return condition.not ? subResult.not() : subResult;
     }
 
