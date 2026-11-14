@@ -70,10 +70,10 @@ jobs:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -83,7 +83,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-github-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -139,10 +139,10 @@ jobs:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -152,7 +152,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-local-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}

@@ -1013,5 +1013,9 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.33 ci: fix YAML in codeql.yml, paths-ignore in hybrid-ci.yml, setup-java build-cache, test-reporter permissions, timeout, release-on-push test-skip
 3.4.34 Fix YAML parse error in GitHub Actions workflow
 3.4.35 ci: fix all GitHub Actions workflow YAML syntax and configuration issues
-
 3.4.36 Fix exit code 127 in workflow-summary job by replacing empty string with proper echo command
+3.4.37 Fix JSON nested mode tests and improve nested mode handling
+3.4.38 P3: Remove unsupported macOS runners from nightly matrix
+3.4.39 Fix hanging fast profile job by excluding problematic tests and improving timeout handling
+3.4.40 Fix all GitHub Actions workflow YAML syntax and configuration issues
+

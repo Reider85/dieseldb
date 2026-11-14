@@ -37,7 +37,7 @@ jobs:
        (startsWith(github.ref, 'refs/tags/driver-python-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-python@v5
         with:
@@ -65,7 +65,7 @@ jobs:
        (startsWith(github.ref, 'refs/tags/driver-node-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v4
         with:
@@ -94,7 +94,7 @@ jobs:
        (startsWith(github.ref, 'refs/tags/driver-go-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-go@v5
         with:
@@ -120,7 +120,7 @@ jobs:
        (startsWith(github.ref, 'refs/tags/driver-rust-v') ||
         startsWith(github.ref, 'refs/tags/drivers-v')))
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
 

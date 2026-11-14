@@ -40,10 +40,10 @@ jobs:
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -83,10 +83,10 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -95,7 +95,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-fast-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -187,12 +187,12 @@ jobs:
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0          # full history: needed for git diff vs base branch
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -201,7 +201,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-tia-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -269,7 +269,7 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify tia-mapping.txt covers all diesel sources (required on PR)
         if: github.event_name == 'pull_request'
@@ -294,10 +294,10 @@ jobs:
       matrix:
         profile: [core, concurrency, network]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -307,7 +307,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -370,10 +370,10 @@ jobs:
         os: [ubuntu-24.04]
         jdk: [21, 22, 23-ea]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK ${{ matrix.jdk }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
@@ -383,7 +383,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -442,10 +442,10 @@ jobs:
         os: [ubuntu-24.04, macos-13, windows-2022]
         jdk: [21, 22, 23-ea]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK ${{ matrix.jdk }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
@@ -455,7 +455,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache-flaky
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-flaky-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -532,10 +532,10 @@ jobs:
       matrix:
         storage: [csv, tsv, jsonl, avro]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -545,7 +545,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache-storage
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-storage-${{ matrix.storage }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -585,10 +585,10 @@ jobs:
         os: [ubuntu-24.04]
         jdk: [21, 22, 23-ea]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK ${{ matrix.jdk }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ matrix.jdk }}
@@ -598,7 +598,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache-stability
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ matrix.os }}-${{ matrix.jdk }}-stability-${{ matrix.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -652,10 +652,10 @@ jobs:
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -665,7 +665,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-${{ inputs.profile }}-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
@@ -711,10 +711,10 @@ jobs:
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
@@ -724,7 +724,7 @@ jobs:
       - name: Cache Maven build-cache
         id: cache-buildcache
         if: always()
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.m2/build-cache/v1/com.dieseldb/dieseldb
           key: buildcache-${{ runner.os }}-release-${{ hashFiles('pom.xml', 'src/main/java/**/*.java', 'src/test/java/**/*.java', 'src/main/avro/**/*.avsc') }}
