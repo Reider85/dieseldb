@@ -2,7 +2,7 @@
 
 > Репозиторий: https://github.com/Reider85/dieseldb
 > Ветка: `main` (HEAD на момент аудита: `77b4810`)
-> Текущая версия в `pom.xml`: `3.4.36`
+> Текущая версия в `pom.xml`: `3.4.41`
 
 ## Контекст
 
@@ -272,7 +272,7 @@ Production: убирается латентность на path `database.execut
    ```
 4. Закоммитить с сообщением:
    ```
-   3.4.37 ci: temporarily mark 3 flaky tests to unblock release pipeline
+   3.4.41 ci: temporarily mark 3 flaky tests to unblock release pipeline
 
    - CheckpointManagerTest: flaky (no-op checkpoint doesn't update durationMs)
    - WALBackpressureTest: flaky (maxSizeSeen race with take())
@@ -283,15 +283,15 @@ Production: убирается латентность на path `database.execut
    the next minor release.
    ```
 5. Запушить в `main`. После этого CI должен позеленеть, и `release-on-push.yml`
-   создаст тег `v3.4.37-build.NNN` + GitHub Release с JAR'ником автоматически
+   создаст тег `v3.4.41-build.NNN` + GitHub Release с JAR'ником автоматически
    (где `NNN` — номер CI run на этом коммите).
 
 ### Критерий приёмки
 - На GitHub Actions вкладке `CI` — последний run на `main` зелёный.
 - На вкладке `Actions → Release on Push` — последний run не `skipped`, а `success`.
-- На вкладке `/releases` — появился первый release `v3.4.37-build.NNN`.
-- На вкладке `/tags` — появился первый tag `v3.4.37-build.NNN`.
-- В `target/*.jar` в artifacts этого release — `dieseldb-3.4.37-build.NNN.jar`.
+- На вкладке `/releases` — появился первый release `v3.4.41-build.NNN`.
+- На вкладке `/tags` — появился первый tag `v3.4.41-build.NNN`.
+- В `target/*.jar` в artifacts этого release — `dieseldb-3.4.41-build.NNN.jar`.
 
 ### Влияние
 Production: **никакого** (это только исключает тесты из smoke-профиля).

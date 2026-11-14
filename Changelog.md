@@ -1019,3 +1019,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.39 Fix hanging fast profile job by excluding problematic tests and improving timeout handling
 3.4.40 Fix all GitHub Actions workflow YAML syntax and configuration issues
 
+
+3.4.41 ci3-p1: Fix CheckpointManagerTest.jmxMetricsExposed by updating metrics for all successful checkpoints

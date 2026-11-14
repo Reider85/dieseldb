@@ -266,14 +266,14 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
             checkpointLsn = legacyCheckpointNow();
         }
         
+        // Update metrics for all successful checkpoints (including no-op)
+        long duration = System.currentTimeMillis() - start;
+        lastCheckpointDurationMs.set(duration);
+        
         if (checkpointLsn > 0) {
             lastCheckpointLsn.set(checkpointLsn);
             totalCheckpoints.incrementAndGet();
             checkpointCount.incrementAndGet();
-
-            // Update metrics
-            long duration = System.currentTimeMillis() - start;
-            lastCheckpointDurationMs.set(duration);
             totalFlushDurationMs.addAndGet(duration);
 
             // Trigger WAL archiver for segments before checkpoint
@@ -291,6 +291,9 @@ public final class CheckpointManager implements AutoCloseable, CheckpointManager
 
             LOGGER.info("Checkpoint completed at LSN {} in {} ms using {} strategy",
                        checkpointLsn, duration, strategy != null ? strategy.name() : "legacy");
+        } else {
+            // Log no-op checkpoint for monitoring
+            LOGGER.debug("No-op checkpoint completed in {} ms (no WAL data to checkpoint)", duration);
         }
 
         return checkpointLsn;
