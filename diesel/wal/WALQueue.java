@@ -33,6 +33,7 @@ public final class WALQueue {
      * @throws InterruptedException if the thread is interrupted while waiting
      */
     public void put(WALWriteRequest request) throws InterruptedException {
+        updateMaxSizeSeen();
         if (queue.size() == queue.remainingCapacity()) {
             blockedCount.incrementAndGet();
         }
@@ -47,7 +48,9 @@ public final class WALQueue {
      * @throws InterruptedException if the thread is interrupted while waiting
      */
     public WALWriteRequest take() throws InterruptedException {
-        return queue.take();
+        WALWriteRequest request = queue.take();
+        updateMaxSizeSeen();
+        return request;
     }
 
     /**
@@ -58,6 +61,7 @@ public final class WALQueue {
      * @return true if the request was enqueued
      */
     public boolean offer(WALWriteRequest request) {
+        updateMaxSizeSeen();
         if (!queue.offer(request)) {
             return false;
         }
