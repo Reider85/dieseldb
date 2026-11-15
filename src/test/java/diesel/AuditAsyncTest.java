@@ -80,6 +80,7 @@ public class AuditAsyncTest {
         database = new Database();
         database.setDataDir(tempDir.toString());
         database.loadTablesFromDisk();
+        AuditTestSupport.flush(database);
         List<Map<String, Object>> rows = database
                 .getTable(diesel.security.AuditBackend.AUDIT).getRows();
         assertEquals(500, rows.size() - baseline,

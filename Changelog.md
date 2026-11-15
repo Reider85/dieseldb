@@ -1021,3 +1021,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 
 
 3.4.41 ci3-p1: Fix CheckpointManagerTest.jmxMetricsExposed by updating metrics for all successful checkpoints
+
+3.4.42 Fix AuditAsyncTest performance by removing duplicate database.close() calls and ensuring proper audit flushing
