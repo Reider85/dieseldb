@@ -9,8 +9,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.function.Function;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 /**
@@ -19,7 +19,7 @@ import javax.annotation.Nullable;
  * common parsing operations.
  */
 class SqlParsingUtils {
-    private static final Logger LOGGER = Logger.getLogger(SqlParsingUtils.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SqlParsingUtils.class);
 
     /**
      * Removes the surrounding double quotes from a quoted identifier.
@@ -253,8 +253,8 @@ class SqlParsingUtils {
     static void validateColumn(String column, Map<String, Class<?>> combinedColumnTypes) {
         Objects.requireNonNull(column, "Column name must not be null");
         if (!matchesColumnOrPath(column, combinedColumnTypes.keySet())) {
-            LOGGER.log(Level.SEVERE, "Unknown column: {0}, available columns: {1}",
-                    new Object[]{column, combinedColumnTypes.keySet()});
+            LOGGER.error("Unknown column: {}, available columns: {}",
+                    column, combinedColumnTypes.keySet());
             throw new IllegalArgumentException(ErrorMessages.UNKNOWN_COLUMN_PREFIX + column);
         }
     }

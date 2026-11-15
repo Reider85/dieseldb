@@ -18,8 +18,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Stream;
 
 /**
@@ -47,7 +47,7 @@ import java.util.stream.Stream;
  */
 public final class WalSender implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.getLogger(WalSender.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(WalSender.class);
 
     /** How often the sender checks for new WAL entries while streaming. */
     static final long POLL_INTERVAL_MS = 10;
@@ -79,7 +79,7 @@ public final class WalSender implements AutoCloseable {
         this.acceptThread = new Thread(this::acceptLoop, "wal-sender-accept");
         this.acceptThread.setDaemon(true);
         this.acceptThread.start();
-        LOGGER.log(Level.INFO, "WalSender listening on port {0}", getPort());
+        LOGGER.info("WalSender listening on port {}", getPort());
     }
 
     /** Returns the actual bound port (useful with an ephemeral port). */
@@ -117,7 +117,7 @@ public final class WalSender implements AutoCloseable {
                 handler.start();
             } catch (IOException e) {
                 if (running.get()) {
-                    LOGGER.log(Level.WARNING, "WalSender accept failed: {0}", e.getMessage());
+                    LOGGER.warn("WalSender accept failed: {}", e.getMessage());
                 }
             }
         }
@@ -154,7 +154,7 @@ public final class WalSender implements AutoCloseable {
             }
         } catch (IOException e) {
             if (running.get()) {
-                LOGGER.log(Level.FINE, "Replication client disconnected: {0}", e.getMessage());
+                LOGGER.debug("Replication client disconnected: {}", e.getMessage());
             }
         } finally {
             activeSockets.remove(socket);
@@ -186,8 +186,8 @@ public final class WalSender implements AutoCloseable {
         }
         ReplicationWire.writeFrame(out, ReplicationWire.TYPE_BACKUP_END,
                 ReplicationWire.longPayload(startLsn));
-        LOGGER.log(Level.INFO, "Base backup shipped: {0} files, startLsn={1}",
-                new Object[]{files, startLsn});
+LOGGER.info("Base backup shipped: {} files, startLsn={}",
+                    files, startLsn);
     }
 
     /**
@@ -201,7 +201,7 @@ public final class WalSender implements AutoCloseable {
     private void streamWal(DataOutputStream out, DataInputStream in, long startLsn) throws IOException {
         long nextLsn = Math.max(1, startLsn);
         long lastHeartbeat = 0;
-        LOGGER.log(Level.FINE, "Streaming WAL from LSN {0}", nextLsn);
+        LOGGER.debug("Streaming WAL from LSN {}", nextLsn);
 
         // Drain ACKs on this thread between writes is not possible; instead we
         // rely on the standby's ACK frames being tiny and infrequent — read
@@ -215,9 +215,9 @@ public final class WalSender implements AutoCloseable {
                 
                 // Validate that we got the expected number of entries
                 if (batch.size() < batchSize && lastLsn > nextLsn) {
-                    LOGGER.log(Level.WARNING, 
-                            "Batch size mismatch: expected {0}, got {1} for range {2}-{3}", 
-                            new Object[]{batchSize, batch.size(), nextLsn, nextLsn + batchSize - 1});
+                    LOGGER.warn( 
+                            "Batch size mismatch: expected {}, got {} for range {}-{}", 
+                            batchSize, batch.size(), nextLsn, nextLsn + batchSize - 1);
                     // Fall back to single-entry processing to avoid gaps
                     for (WALEntry entry : batch) {
                         ReplicationWire.writeFrame(out, ReplicationWire.TYPE_WAL_ENTRY, entry.toBytes());
@@ -258,7 +258,7 @@ public final class WalSender implements AutoCloseable {
             while (in.available() >= ReplicationWire.HEADER_SIZE + 8) {
                 ReplicationWire.Frame frame = ReplicationWire.readFrame(in);
                 if (frame.type() != ReplicationWire.TYPE_ACK) {
-                    LOGGER.log(Level.FINE, "Ignoring unexpected mid-stream frame type {0}", frame.type());
+                    LOGGER.debug("Ignoring unexpected mid-stream frame type {}", frame.type());
                 }
             }
         } catch (IOException e) {
@@ -284,7 +284,7 @@ public final class WalSender implements AutoCloseable {
         try {
             serverSocket.close();
         } catch (IOException e) {
-            LOGGER.log(Level.FINE, "Error closing replication listener: {0}", e.getMessage());
+            LOGGER.debug("Error closing replication listener: {}", e.getMessage());
         }
         for (Socket socket : activeSockets) {
             try {

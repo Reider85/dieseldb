@@ -5,8 +5,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Online ALTER TABLE ... ALGORITHM=COPY (prompt4 #38, R3-010 step 2/3).
@@ -44,7 +44,7 @@ final class AlterTableCopyAlgorithm implements Runnable {
         }
     }
 
-    private static final Logger LOGGER = Logger.getLogger(AlterTableCopyAlgorithm.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AlterTableCopyAlgorithm.class);
 
     private final Database database;
     private final Table table;
@@ -158,7 +158,7 @@ final class AlterTableCopyAlgorithm implements Runnable {
             Thread.currentThread().interrupt();
             rollback("ROLLED_BACK", "copy interrupted before completion");
         } catch (Throwable t) {
-            LOGGER.log(Level.SEVERE, "ALTER COPY failed on table " + tableName, t);
+            LOGGER.error("ALTER COPY failed on table " + tableName, t);
             rollback("FAILED", "copy failed: " + t.getMessage());
         }
     }
@@ -223,12 +223,9 @@ final class AlterTableCopyAlgorithm implements Runnable {
             coordinator.markDone();
             table.detachDualWrite();
             long t4 = System.nanoTime();
-            if (LOGGER.isLoggable(Level.INFO)) {
-                LOGGER.log(Level.INFO,
-                        "ALTER COPY finalize phases for {0}: seal={1}ms lockAcquire={2}ms replay={3}ms install={4}ms events={5}",
-                        new Object[]{tableName, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000,
-                                (t3 - t2) / 1_000_000, (t4 - t3) / 1_000_000, pending.size()});
-            }
+            LOGGER.info("ALTER COPY finalize phases for {}: seal={}ms lockAcquire={}ms replay={}ms install={}ms events={}",
+                    tableName, (t1 - t0) / 1_000_000, (t2 - t1) / 1_000_000,
+                    (t3 - t2) / 1_000_000, (t4 - t3) / 1_000_000, pending.size());
         } finally {
             table.getTableLock().writeLock().unlock();
         }
@@ -236,8 +233,8 @@ final class AlterTableCopyAlgorithm implements Runnable {
         database.publishAlterCatalog(tableName, table);
         table.saveToFile(tableName);
         long t6 = System.nanoTime();
-        LOGGER.log(Level.INFO, "ALTER COPY durable phase for {0}: catalog={1}ms save={2}ms",
-                new Object[]{tableName, (t6 - t5) / 1_000_000, (t6 - t5) / 1_000_000});
+        LOGGER.info("ALTER COPY durable phase for {}: catalog={}ms save={}ms",
+                tableName, (t6 - t5) / 1_000_000, (t6 - t5) / 1_000_000);
         finish("COMPLETED", "copy completed: " + tableName);
     }
 
@@ -257,7 +254,7 @@ final class AlterTableCopyAlgorithm implements Runnable {
             try {
                 coordinator.seal();
             } catch (RuntimeException sealError) {
-                LOGGER.log(Level.WARNING, "Seal during ALTER COPY rollback failed on " + tableName, sealError);
+                LOGGER.warn("Seal during ALTER COPY rollback failed on " + tableName, sealError);
             }
             table.getTableLock().writeLock().lock();
             try {

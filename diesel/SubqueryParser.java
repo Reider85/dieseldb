@@ -1,8 +1,8 @@
 package diesel;
 
 import java.util.*;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -22,7 +22,7 @@ import java.util.stream.IntStream;
  */
 public class SubqueryParser {
     private final SubqueryResolver resolver = new SubqueryResolver();
-    private static final Logger LOGGER = Logger.getLogger(SubqueryParser.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SubqueryParser.class);
     private static final String QUOTED_IDENTIFIER_PATTERN = "\"[^\"]*\"";
     private static final String SIMPLE_IDENTIFIER_PATTERN = "[a-z_]\\w*";
     private static final String IDENTIFIER_PATTERN = "(?:" + QUOTED_IDENTIFIER_PATTERN + "|" + SIMPLE_IDENTIFIER_PATTERN + ")";
@@ -65,29 +65,29 @@ public class SubqueryParser {
         if (query == null) {
             throw new IllegalArgumentException(ErrorMessages.QUERY_NULL);
         }
-        LOGGER.log(Level.INFO, "Parsing query: {0}", query);
+        LOGGER.info("Parsing query: {}", query);
         String normalizedQuery = normalizeQueryString(query).trim();
 
         if (!containsSubquery(normalizedQuery)) {
-            LOGGER.log(Level.FINE, "No subqueries found, delegating to QueryParser: {0}", query);
+            LOGGER.debug("No subqueries found, delegating to QueryParser: {}", query);
             return queryParser.parse(query, database);
         }
 
-        LOGGER.log(Level.FINE, "Subqueries detected, parsing with SubqueryParser: {0}", query);
+        LOGGER.debug("Subqueries detected, parsing with SubqueryParser: {}", query);
         try {
             if (normalizedQuery.toUpperCase().startsWith(SqlKeywords.SELECT)) {
                 // Проверяем, является ли весь запрос SELECT ... WHERE ... IN (SELECT ...)
                 if (isInSubqueryPattern(normalizedQuery)) {
-                    LOGGER.log(Level.FINE, "Detected IN-subquery pattern, using custom parsing");
+                    LOGGER.debug("Detected IN-subquery pattern, using custom parsing");
                     return parseSelectQuery(query, database);
                 }
                 return parseSelectQuery(query, database);
             } else {
-                LOGGER.log(Level.FINE, "Non-SELECT query, delegating to QueryParser: {0}", query);
+                LOGGER.debug("Non-SELECT query, delegating to QueryParser: {}", query);
                 return queryParser.parse(query, database);
             }
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Failed to parse query: {0}, Error: {1}", new Object[]{query, e.getMessage()});
+            LOGGER.error("Failed to parse query: {}, Error: {}", query, e.getMessage());
             throw e;
         }
     }
@@ -146,7 +146,7 @@ public class SubqueryParser {
                 .replaceAll("(?i)(\\))\\s*(LIMIT|WHERE|ORDER\\s+BY|GROUP\\s+BY|HAVING|AS|INNER\\s+JOIN|LEFT\\s+JOIN|RIGHT\\s+JOIN|FULL\\s+JOIN|CROSS\\s+JOIN)", "$1 $2")
                 .replaceAll("\\s*;", "")
                 .replaceAll(SubqueryConstants.WHITESPACE_PATTERN, SubqueryConstants.SINGLE_SPACE));
-        LOGGER.log(Level.FINEST, "Normalized query: {0}", normalized);
+        LOGGER.trace("Normalized query: {}", normalized);
         return normalized;
     }
 
@@ -182,8 +182,8 @@ public class SubqueryParser {
         Integer limit = clauses.limit;
         Integer offset = clauses.offset;
 
-        LOGGER.log(Level.INFO, "Parsed SELECT query: table={0}, columns={1}, aggregates={2}, joins={3}, conditions={4}",
-                new Object[]{tableName, columns, aggregates, joins, conditions});
+        LOGGER.info("Parsed SELECT query: table={}, columns={}, aggregates={}, joins={}, conditions={}",
+                tableName, columns, aggregates, joins, conditions);
 
         SelectQuery selectQuery = SelectQuery.builder()
                 .tableName(tableName)
@@ -343,7 +343,7 @@ public class SubqueryParser {
         String[] derived = parseDerivedTablePart(mainTablePart);
         String subQueryStr = derived[0];
         String alias = derived[1];
-        LOGGER.log(Level.INFO, "Parsed derived main table: subquery={0}, alias={1}", new Object[]{subQueryStr, alias});
+        LOGGER.info("Parsed derived main table: subquery={}, alias={}", subQueryStr, alias);
         Table virtualTable = materializeDerivedTable(subQueryStr, alias, database);
         String tableName = alias != null ? alias : virtualTable.getName();
         Map<String, String> tableAliases = new HashMap<>();
@@ -379,13 +379,13 @@ public class SubqueryParser {
                                    List<QueryParser.JoinInfo> joins) {
         String joinTypeStr = joinParts.get(index).toUpperCase();
         String joinPart = joinParts.get(index + 1).trim();
-        LOGGER.log(Level.FINEST, "Processing join part: {0}", joinPart);
+        LOGGER.trace("Processing join part: {}", joinPart);
         QueryParser.JoinType joinType = parseJoinType(joinTypeStr);
 
         int onIndex = findOnClausePosition(joinPart);
         String joinTablePart = onIndex == -1 ? joinPart : joinPart.substring(0, onIndex).trim();
         String onClause = extractOnClause(joinPart);
-        LOGGER.log(Level.FINEST, "Extracted onClause: {0}", onClause);
+        LOGGER.trace("Extracted onClause: {}", onClause);
 
         String[] joinTableTokens = joinTablePart.split(SubqueryConstants.WHITESPACE_PATTERN);
         String joinTableName = unquoteIdentifier(joinTableTokens[0].trim());
@@ -583,8 +583,8 @@ public class SubqueryParser {
         for (Map<String, Object> row : rows) {
             virtualTable.addRow(row);
         }
-        LOGGER.log(Level.INFO, "Materialized derived table {0} with {1} rows and columns {2}",
-                new Object[]{tableName, rows.size(), columns});
+        LOGGER.info("Materialized derived table {} with {} rows and columns {}",
+                tableName, rows.size(), columns);
         return virtualTable;
     }
 
@@ -682,7 +682,7 @@ public class SubqueryParser {
             }
         } else {
             // Разрешаем другие типы условий (например, сравнение с константой)
-            LOGGER.log(Level.FINEST, "Allowing non-column condition type: {0}", cond);
+            LOGGER.trace("Allowing non-column condition type: {}", cond);
         }
     }
 
@@ -700,20 +700,20 @@ public class SubqueryParser {
         Pattern wherePattern = Pattern.compile("(?i)^WHERE\\s+");
         Matcher whereMatcher = wherePattern.matcher(whereClause);
         if (!whereMatcher.find()) {
-            LOGGER.log(Level.WARNING, "WHERE clause not found in substring: {0}", whereClause);
+            LOGGER.warn("WHERE clause not found in substring: {}", whereClause);
             return new ArrayList<>();
         }
         String conditionStr = whereClause.substring(whereMatcher.end()).trim();
-        LOGGER.log(Level.FINEST, "Raw extracted conditionStr: {0}", conditionStr);
+        LOGGER.trace("Raw extracted conditionStr: {}", conditionStr);
         Pattern limitPattern = Pattern.compile(SubqueryConstants.LIMIT_OFFSET_TAIL_PATTERN, Pattern.DOTALL);
         conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
-        LOGGER.log(Level.FINEST, "After removing LIMIT: {0}", conditionStr);
+        LOGGER.trace("After removing LIMIT: {}", conditionStr);
         conditionStr = conditionStr.replaceFirst(SubqueryConstants.LEADING_WHERE_PATTERN, "").trim();
-        LOGGER.log(Level.FINEST, "After removing WHERE: {0}", conditionStr);
+        LOGGER.trace("After removing WHERE: {}", conditionStr);
         if (conditionStr.isEmpty()) {
             return new ArrayList<>();
         }
-        LOGGER.log(Level.FINEST, "Extracted WHERE condition: {0}", conditionStr);
+        LOGGER.trace("Extracted WHERE condition: {}", conditionStr);
         return parseConditions(conditionStr, ctx);
     }
 
@@ -833,13 +833,13 @@ public class SubqueryParser {
                 parenDepth = newDepth;
 
                 if (parenDepth < 0) {
-                    LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе на позиции {0}: {1}",
-                            new Object[]{match.start(), query});
+LOGGER.error("Несбалансированные скобки в запросе на позиции {}: {}",
+                    match.start(), query);
                     return -1;
                 }
                 if (match.tokenType().equals(MessageConstants.TOKEN_CLAUSE) && parenDepth == 0 && !inSubQuery) {
-                    LOGGER.log(Level.FINEST, "Considering clause {0} at position {1}, query: {2}",
-                            new Object[]{match.token(), match.start(), query});
+LOGGER.trace("Considering clause {} at position {}, query: {}",
+                    match.token(), match.start(), query);
                     clauseIndex = match.start();
                 }
                 currentPos = match.nextPos();
@@ -849,7 +849,7 @@ public class SubqueryParser {
         }
 
         if (parenDepth != 0) {
-            LOGGER.log(Level.SEVERE, "Несбалансированные скобки в запросе: parenDepth={0}, query={1}", new Object[]{parenDepth, query});
+            LOGGER.error("Несбалансированные скобки в запросе: parenDepth={}, query={}", parenDepth, query);
             return -1;
         }
 
@@ -911,9 +911,9 @@ public class SubqueryParser {
 
     private void logClauseResult(String clause, int clauseIndex, String query) {
         if (clauseIndex == -1) {
-            LOGGER.log(Level.FINEST, "Клауза {0} не найдена вне подзапросов в запросе: {1}", new Object[]{clause, query});
+            LOGGER.trace("Клауза {} не найдена вне подзапросов в запросе: {}", clause, query);
         } else {
-            LOGGER.log(Level.FINEST, "Найдена клауза {0} на индексе {1} в запросе: {2}", new Object[]{clause, clauseIndex, query});
+            LOGGER.trace("Найдена клауза {} на индексе {} в запросе: {}", clause, clauseIndex, query);
         }
     }
 
@@ -1042,23 +1042,23 @@ for (int i = 0; i < input.length(); i++) {
         if (conditionStr == null || conditionStr.trim().isEmpty()) {
             return new ArrayList<>();
         }
-        LOGGER.log(Level.FINEST, "Original conditionStr in parseConditions: {0}", conditionStr);
+        LOGGER.trace("Original conditionStr in parseConditions: {}", conditionStr);
         // Удаляем WHERE, если присутствует
         conditionStr = conditionStr.replaceFirst(SubqueryConstants.LEADING_WHERE_PATTERN, "").trim();
-        LOGGER.log(Level.FINEST, "After removing WHERE in parseConditions: {0}", conditionStr);
+        LOGGER.trace("After removing WHERE in parseConditions: {}", conditionStr);
         // Очищаем строку от LIMIT
         Pattern limitPattern = Pattern.compile(SubqueryConstants.LIMIT_OFFSET_TAIL_PATTERN, Pattern.DOTALL);
         conditionStr = limitPattern.matcher(conditionStr).replaceAll("").trim();
-        LOGGER.log(Level.FINEST, "After removing LIMIT in parseConditions: {0}", conditionStr);
+        LOGGER.trace("After removing LIMIT in parseConditions: {}", conditionStr);
         if (conditionStr.isEmpty()) {
             return new ArrayList<>();
         }
-        LOGGER.log(Level.FINEST, "Cleaned condition string: {0}", conditionStr);
+        LOGGER.trace("Cleaned condition string: {}", conditionStr);
         try {
             List<Token> tokens = tokenizeConditions(conditionStr);
             return parseTokenizedConditions(tokens, ctx, null, false);
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.SEVERE, "Failed to tokenize condition: {0}, Error: {1}", new Object[]{conditionStr, e.getMessage()});
+            LOGGER.error("Failed to tokenize condition: {}, Error: {}", conditionStr, e.getMessage());
             throw e;
         }
     }
@@ -1078,9 +1078,9 @@ for (int i = 0; i < input.length(); i++) {
     }
 
     private List<Token> tokenizeConditions(String conditionStr) {
-        LOGGER.log(Level.FINEST, "Starting tokenization of conditionStr: {0}", conditionStr);
+        LOGGER.trace("Starting tokenization of conditionStr: {}", conditionStr);
         String processedStr = conditionStr.replaceAll("(?i)(\\))\\s*(LIMIT\\s+\\d+)", "$1 $2");
-        LOGGER.log(Level.FINEST, "After preprocessing for LIMIT: {0}", processedStr);
+        LOGGER.trace("After preprocessing for LIMIT: {}", processedStr);
         List<Map.Entry<String, Pattern>> patterns = buildTokenizationPatterns();
 
         List<Token> tokens = new ArrayList<>();
@@ -1096,13 +1096,13 @@ for (int i = 0; i < input.length(); i++) {
             TokenMatch match = findBestTokenMatch(processedStr, currentPos, stringLength, patterns);
             if (!match.matched) {
                 String remaining = processedStr.substring(currentPos);
-                LOGGER.log(Level.SEVERE, "Failed to match token at position {0}: {1}", new Object[]{currentPos, remaining});
+                LOGGER.error("Failed to match token at position {}: {}", currentPos, remaining);
                 throw new IllegalArgumentException("Invalid token at position " + currentPos + SubqueryConstants.COLON_SPACE + remaining);
             }
 
             Token.TokenType type = resolveTokenType(match.patternName);
             tokens.add(new Token(type, match.tokenValue));
-            LOGGER.log(Level.FINEST, "Tokenized: {0}, type: {1}, position: {2}",
+            LOGGER.trace("Tokenized: {}, type: {}, position: {}",
                     new Object[]{match.tokenValue, type, currentPos});
             currentPos = match.endPos;
         }
@@ -1110,7 +1110,7 @@ for (int i = 0; i < input.length(); i++) {
         if (tokens.isEmpty()) {
             throw new IllegalArgumentException("No valid tokens found in condition: " + processedStr);
         }
-        LOGGER.log(Level.FINE, "Tokenization completed, tokens: {0}", tokens);
+        LOGGER.debug("Tokenization completed, tokens: {}", tokens);
         return tokens;
     }
 
@@ -1157,12 +1157,12 @@ for (int i = 0; i < input.length(); i++) {
             if (matcher.lookingAt()) {
                 String tokenValue = matcher.group().trim();
                 if (!tokenValue.isEmpty()) {
-                    LOGGER.log(Level.FINEST, "Applied pattern {0}: Matched token='{1}', End position={2}, Remaining string='{3}'",
+                    LOGGER.trace("Applied pattern {}: Matched token='{}', End position={}, Remaining string='{}'",
                             new Object[]{entry.getKey(), tokenValue, matcher.end(), str.substring(matcher.end())});
                     return new TokenMatch(true, tokenValue, entry.getKey(), matcher.end());
                 }
             } else {
-                LOGGER.log(Level.FINEST, "Applied pattern {0}: No match at position {1}, Current string='{2}'",
+                LOGGER.trace("Applied pattern {}: No match at position {}, Current string='{}'",
                         new Object[]{entry.getKey(), pos, str.substring(pos)});
             }
         }
@@ -1184,17 +1184,17 @@ for (int i = 0; i < input.length(); i++) {
 
         for (int i = 0; i < tokens.size(); i++) {
             Token token = tokens.get(i);
-            LOGGER.log(Level.FINEST, "Processing token: {0}, type: {1}", new Object[]{token.value, token.type});
+            LOGGER.debug("Processing token: {0}, type: {1}", token.value, token.type);
 
             if (token.type == Token.TokenType.LOGICAL_OPERATOR) {
                 currentConjunction = token.value.toUpperCase();
-                LOGGER.log(Level.FINEST, "Set conjunction: {0}", currentConjunction);
+                LOGGER.debug("Set conjunction: {0}", currentConjunction);
             } else if (token.type == Token.TokenType.TABLE_ALIAS) {
                 lastAlias = token.value;
-                LOGGER.log(Level.FINEST, "Captured table alias: {0}", lastAlias);
+                LOGGER.debug("Captured table alias: {0}", lastAlias);
             } else if (token.value.equalsIgnoreCase(SqlKeywords.NOT)) {
                 not = true;
-                LOGGER.log(Level.FINEST, "Processing NOT keyword, negation enabled for next condition");
+                LOGGER.trace("Processing NOT keyword, negation enabled for next condition");
             } else {
                 String condStr = token.value;
                 String effectiveTableName = lastAlias != null ? ctx.tableAliases.getOrDefault(lastAlias, lastAlias) : ctx.defaultTableName;
@@ -1206,7 +1206,7 @@ for (int i = 0; i < input.length(); i++) {
             }
         }
 
-        LOGGER.log(Level.FINE, "Parsed conditions: {0}", conditions);
+        LOGGER.debug("Parsed conditions: {0}", conditions);
         return conditions;
     }
 
@@ -1219,10 +1219,10 @@ for (int i = 0; i < input.length(); i++) {
             return parseInCondition(condStr, withDefaultTableName(ctx, effectiveTableName), conjunction, not);
         }
         if (condStr.toUpperCase().contains(SqlKeywords.SELECT)) {
-            LOGGER.log(Level.FINEST, "Attempting to parse subquery condition: {0}", condStr);
+            LOGGER.debug("Attempting to parse subquery condition: {0}", condStr);
             return parseSubQueryCondition(condStr, withDefaultTableName(ctx, effectiveTableName), conjunction, not);
         }
-        LOGGER.log(Level.FINEST, "Parsing single condition: {0}", condStr);
+        LOGGER.debug("Parsing single condition: {0}", condStr);
         return parseSingleCondition(condStr, withDefaultTableName(ctx, effectiveTableName), conjunction, not);
     }
 
@@ -1282,14 +1282,14 @@ for (int i = 0; i < input.length(); i++) {
         String normalizedColumn = normalizeColumnName(column, ctx.defaultTableName, ctx.tableAliases);
         Class<?> columnType = getColumnType(normalizedColumn, ctx.combinedColumnTypes);
 
-        LOGGER.log(Level.FINEST, "Parsing IN condition: column={0}, values={1}, not={2}", new Object[]{normalizedColumn, valuesStr, inNot});
+        LOGGER.debug("Parsing IN condition: column={0}, values={1}, not={2}", normalizedColumn, valuesStr, inNot);
 
         List<String> valueParts = splitInValues(valuesStr);
         List<Object> inValues = parseInValues(valueParts, normalizedColumn, columnType);
         if (inValues.isEmpty()) {
             throw new IllegalArgumentException("Empty IN list in: " + condStr);
         }
-        LOGGER.log(Level.FINE, "Parsed IN values condition: {0} {1}IN {2}", new Object[]{normalizedColumn, inNot ? "NOT " : "", inValues});
+        LOGGER.debug("Parsed IN values condition: {0} {1}IN {2}", normalizedColumn, inNot ? "NOT " : "", inValues);
         return new QueryParser.Condition(normalizedColumn, inValues, conjunction, inNot);
     }
 
@@ -1307,12 +1307,12 @@ for (int i = 0; i < input.length(); i++) {
         String subQueryStr = inMatcher.group(3).trim();
         String normalizedColumn = normalizeColumnName(column, ctx.defaultTableName, ctx.tableAliases);
 
-        LOGGER.log(Level.FINEST, "Parsing IN subquery condition: column={0}, subquery={1}, not={2}", new Object[]{normalizedColumn, subQueryStr, inNot});
+        LOGGER.debug("Parsing IN subquery condition: column={0}, subquery={1}, not={2}", normalizedColumn, subQueryStr, inNot);
 
         validateSubQuery(subQueryStr);
         Query<?> subQuery = createSubQueryHolder(subQueryStr);
         QueryParser.SubQuery subQueryObj = new QueryParser.SubQuery(subQuery, null);
-        LOGGER.log(Level.FINE, "Parsed IN subquery condition: {0} {1}IN (subquery: {2})", new Object[]{normalizedColumn, inNot ? "NOT " : "", subQueryStr});
+        LOGGER.debug("Parsed IN subquery condition: {0} {1}IN (subquery: {2})", normalizedColumn, inNot ? "NOT " : "", subQueryStr);
         return new QueryParser.Condition(normalizedColumn, subQueryObj, conjunction, inNot);
     }
 
@@ -1393,7 +1393,7 @@ for (int i = 0; i < input.length(); i++) {
         QueryParser.Operator operator = parseOperator(operatorStr);
         String normalizedColumn = normalizeColumnName(column, ctx.defaultTableName, ctx.tableAliases);
         validateColumn(normalizedColumn, ctx.combinedColumnTypes);
-        LOGGER.log(Level.FINE, "Parsed subquery condition: {0} {1} (subquery: {2})", new Object[]{normalizedColumn, operatorStr, subQueryStr});
+        LOGGER.debug("Parsed subquery condition: {0} {1} (subquery: {2})", normalizedColumn, operatorStr, subQueryStr);
         return new QueryParser.Condition(normalizedColumn, newSubQuery, operator, conjunction, not);
     }
 
@@ -1457,9 +1457,9 @@ for (int i = 0; i < input.length(); i++) {
 
     private QueryParser.Condition parseSingleCondition(String condStr, ParseContext ctx,
                                                     String conjunction, boolean not) {
-        LOGGER.log(Level.FINEST, "Parsing single condition: {0}, full condition={1}", new Object[]{condStr, condStr});
+        LOGGER.debug("Parsing single condition: {0}, full condition={1}", condStr, condStr);
         condStr = condStr.replaceAll("([=><!])", " $1 ").replaceAll(SubqueryConstants.WHITESPACE_PATTERN, SubqueryConstants.SINGLE_SPACE).trim();
-        LOGGER.log(Level.FINEST, "Normalized condition: {0}", condStr);
+        LOGGER.debug("Normalized condition: {0}", condStr);
 
         QueryParser.Condition likeResult = parseLikeCondition(condStr, ctx, conjunction, not);
         if (likeResult != null) {

@@ -14,8 +14,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Point-in-time recovery driver (prompt 4 #43 / R3-011 step 4/4): replays the
@@ -55,7 +55,7 @@ import java.util.logging.Logger;
  */
 public final class PointInTimeRecovery {
 
-    private static final Logger LOGGER = Logger.getLogger(PointInTimeRecovery.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PointInTimeRecovery.class);
 
     private PointInTimeRecovery() {
         // utility class
@@ -80,8 +80,7 @@ public final class PointInTimeRecovery {
 
         List<WALEntry> window = readWindow(wal, lastBackupLsn);
         if (window.isEmpty()) {
-            LOGGER.info(() -> "PITR: no WAL records after LSN " + lastBackupLsn
-                    + " — restored state equals the backup");
+            LOGGER.info("PITR: no WAL records after LSN {} — restored state equals the backup", lastBackupLsn);
             return new PitrResult(targetTimestampMs, wal.getLastLsn(), 0, 0,
                     0, 0, 0, 0, 0, 0, 0, 0, 0);
         }
@@ -109,8 +108,7 @@ public final class PointInTimeRecovery {
                     // Legacy pre-PITR payload: no timestamp, cannot decide.
                     visible = true;
                     legacyCommits++;
-                    LOGGER.warning(() -> "PITR: legacy COMMIT without timestamp for txid "
-                            + txid + " (LSN " + entry.getLsn() + ") — treated as visible");
+                    LOGGER.warn("PITR: legacy COMMIT without timestamp for txid {} (LSN {}) — treated as visible", txid, entry.getLsn());
                 } else {
                     visible = commitTs <= targetTimestampMs;
                 }
@@ -228,7 +226,7 @@ public final class PointInTimeRecovery {
             } catch (IOException e) {
                 // A hide failure must not abort the pass: the row stays as the
                 // backup left it (same tolerance as the crash-recovery undo).
-                LOGGER.log(Level.WARNING, "PITR: hide failed for txid " + txid
+                LOGGER.warn("PITR: hide failed for txid " + txid
                         + " at LSN " + entry.getLsn() + ": " + e.getMessage(), e);
                 skipped++;
             }
@@ -243,7 +241,7 @@ public final class PointInTimeRecovery {
                 commits.size(), hidden.size(), appliedInserts, appliedUpdates,
                 hiddenTombstones, hiddenRestores, commitTombstones,
                 skipped, legacyCommits, maxTxid, maxCommitCsn);
-        LOGGER.info(() -> "PITR done: " + result);
+        LOGGER.info("PITR done: {}", result);
         return result;
     }
 
@@ -299,7 +297,7 @@ public final class PointInTimeRecovery {
         try {
             return CommitPayload.deserialize(entry.getAfterImage());
         } catch (RuntimeException e) {
-            LOGGER.log(Level.WARNING, "PITR: skipping undecodable COMMIT at LSN "
+            LOGGER.warn("PITR: skipping undecodable COMMIT at LSN "
                     + entry.getLsn() + ": " + e.getMessage());
             return null;
         }
@@ -313,7 +311,7 @@ public final class PointInTimeRecovery {
         try {
             return DmlPayload.deserialize(data);
         } catch (RuntimeException e) {
-            LOGGER.log(Level.WARNING, "PITR: skipping undecodable DML payload at LSN "
+            LOGGER.warn("PITR: skipping undecodable DML payload at LSN "
                     + lsn + ": " + e.getMessage());
             return null;
         }

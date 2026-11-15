@@ -1,8 +1,8 @@
 package diesel;
 
 import java.util.List;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.DoubleVector;
@@ -19,7 +19,7 @@ import jdk.incubator.vector.VectorSpecies;
  */
 public class AggregateFunctions {
     
-    private static final Logger LOGGER = Logger.getLogger(AggregateFunctions.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AggregateFunctions.class);
     /**
      * TESTS-15: SIMD kernels are only usable when jdk.incubator.vector is part of
      * the boot module layer (surefire argLine passes --add-modules in the

@@ -1,7 +1,7 @@
 package diesel;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Background write-behind flusher for auto-commit DML (prompt4 R3-005
@@ -17,7 +17,7 @@ import java.util.logging.Logger;
  */
 final class PersistFlusher {
 
-    private static final Logger LOGGER = Logger.getLogger(PersistFlusher.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(PersistFlusher.class);
 
     static final String BACKGROUND_KEY = "diesel.persist.background";
     static final String INTERVAL_KEY = "diesel.persist.flush.interval.ms";
@@ -42,7 +42,7 @@ final class PersistFlusher {
             thread = new Thread(PersistFlusher::run, "diesel-persist-flusher");
             thread.setDaemon(true);
             thread.start();
-            LOGGER.log(Level.FINE, "Persist flusher started (interval {0} ms)", flushIntervalMs());
+            LOGGER.debug("Persist flusher started (interval {} ms)", flushIntervalMs());
         }
     }
 
@@ -109,7 +109,7 @@ final class PersistFlusher {
             try {
                 Table.flushAllPendingPersists();
             } catch (Throwable t) {
-                LOGGER.log(Level.WARNING, "Background persist flush failed", t);
+                LOGGER.warn("Background persist flush failed", t);
             }
         }
     }

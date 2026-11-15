@@ -18,8 +18,8 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Standby-side streaming client (prompt4 #58, R3-016 step 1/5).
@@ -50,7 +50,7 @@ import java.util.logging.Logger;
  */
 public final class WalReceiver implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.getLogger(WalReceiver.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(WalReceiver.class);
 
     /** Nominal backoff after a failed connection attempt. */
     static final long INITIAL_BACKOFF_MS = 500;
@@ -128,8 +128,8 @@ public final class WalReceiver implements AutoCloseable {
                             + frame.type());
                 }
             }
-            LOGGER.log(Level.INFO, "Base backup from {0}:{1}: {2} files, resume LSN {3}",
-                    new Object[]{host, port, files, startLsn});
+            LOGGER.info("Base backup from {}:{}: {} files, resume LSN {}",
+                    host, port, files, startLsn);
             return startLsn;
         }
     }
@@ -181,9 +181,9 @@ public final class WalReceiver implements AutoCloseable {
                     break;
                 }
                 int attempt = reconnectAttempts.incrementAndGet();
-                LOGGER.log(Level.WARNING,
-                        "WAL stream lost (attempt {0}), retrying in {1} ms: {2}",
-                        new Object[]{attempt, backoffMs, e.getMessage()});
+                LOGGER.warn(
+                        "WAL stream lost (attempt {}), retrying in {} ms: {}",
+                        attempt, backoffMs, e.getMessage());
                 sleepQuietly(backoffMs);
                 backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
             }
@@ -207,8 +207,8 @@ public final class WalReceiver implements AutoCloseable {
             ReplicationWire.writeFrame(out, ReplicationWire.TYPE_START,
                     ReplicationWire.longPayload(resumeLsn));
             connected.set(true);
-            LOGGER.log(Level.INFO, "Streaming connected to {0}:{1}, resume LSN {2}",
-                    new Object[]{host, port, resumeLsn});
+            LOGGER.info("Streaming connected to {}:{}, resume LSN {}",
+                    host, port, resumeLsn);
 
             while (running.get()) {
                 ReplicationWire.Frame frame = ReplicationWire.readFrame(in);

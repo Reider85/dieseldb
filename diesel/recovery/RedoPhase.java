@@ -10,8 +10,8 @@ import diesel.wal.WALSegment;
 import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ARIES redo phase: replays every WAL record with
@@ -54,7 +54,7 @@ import java.util.logging.Logger;
  */
 public final class RedoPhase {
 
-    private static final Logger LOGGER = Logger.getLogger(RedoPhase.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(RedoPhase.class);
 
     private RedoPhase() {
         // utility class
@@ -138,7 +138,7 @@ public final class RedoPhase {
                     if (!entry.hasAfterImage()) {
                         // Structurally valid record with a missing image: treat
                         // as corrupt, never install a partial page.
-                        LOGGER.log(Level.WARNING, "Skipping PAGE_IMAGE record without after-image at LSN " + lsn);
+                        LOGGER.warn("Skipping PAGE_IMAGE record without after-image at LSN " + lsn);
                         ignored++;
                         continue;
                     }
@@ -153,7 +153,7 @@ public final class RedoPhase {
                         payload = CommitPayload.deserialize(entry.getAfterImage());
                     } catch (RuntimeException e) {
                         // Legacy or corrupt payload: physical redo must not fail.
-                        LOGGER.log(Level.WARNING, "Skipping undecodable COMMIT payload at LSN "
+                        LOGGER.warn("Skipping undecodable COMMIT payload at LSN "
                                 + lsn + ": " + e.getMessage());
                         ignored++;
                         continue;

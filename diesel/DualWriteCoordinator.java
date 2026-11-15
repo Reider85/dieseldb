@@ -38,8 +38,8 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 final class DualWriteCoordinator {
 
-    private static final java.util.logging.Logger LOGGER =
-            java.util.logging.Logger.getLogger(DualWriteCoordinator.class.getName());
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(DualWriteCoordinator.class);
 
     /** Lifecycle state of the journal. */
     enum State {
@@ -157,8 +157,7 @@ final class DualWriteCoordinator {
             }
             long waitedMs = (System.nanoTime() - waitStart) / 1_000_000;
             if (waitedMs >= 5) {
-                LOGGER.log(java.util.logging.Level.INFO,
-                        "DML barrier wait on table {0}: {1} ms (state={2})", new Object[]{tableName, waitedMs, state});
+                LOGGER.info("DML barrier wait on table {}: {} ms (state={})", tableName, waitedMs, state);
             }
             barrierWaitNanos += (System.nanoTime() - waitStart);
             if (state != State.RECORDING) {
@@ -193,9 +192,8 @@ final class DualWriteCoordinator {
                 activeMutations--;
                 monitor.notifyAll();
                 if (tookMs >= 10) {
-                    LOGGER.log(java.util.logging.Level.INFO,
-                            "Gated mutation took {0} ms on table {1} (thread {2})",
-                            new Object[]{tookMs, tableName, Thread.currentThread().getName()});
+                    LOGGER.info("Gated mutation took {} ms on table {} (thread {})",
+                            tookMs, tableName, Thread.currentThread().getName());
                 }
             }
         } finally {
@@ -263,9 +261,8 @@ final class DualWriteCoordinator {
             }
             long waitedMs = (System.nanoTime() - waitStart) / 1_000_000;
             if (waitedMs >= 5) {
-                LOGGER.log(java.util.logging.Level.INFO,
-                        "ALTER COPY {0} waited {1} ms for in-flight writers on table {2} (last begin: {3})",
-                        new Object[]{phase, waitedMs, tableName, activeDesc});
+                LOGGER.info("ALTER COPY {} waited {} ms for in-flight writers on table {} (last begin: {})",
+                        phase, waitedMs, tableName, activeDesc);
             }
             state = State.SEALED;
         }

@@ -9,8 +9,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Minimal HTTP server exposing the {@link MetricsRegistry} at
@@ -30,7 +30,7 @@ import java.util.logging.Logger;
  */
 public final class MetricsHttpServer {
 
-    private static final Logger LOGGER = Logger.getLogger(MetricsHttpServer.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(MetricsHttpServer.class);
 
     /** The Prometheus scrape endpoint this server serves. */
     public static final String METRICS_PATH = "/metrics";
@@ -99,15 +99,15 @@ public final class MetricsHttpServer {
             http.start();
             server = http;
             running = true;
-            LOGGER.log(Level.INFO, "Metrics endpoint listening on http://{0}:{1}{2}",
-                    new Object[]{host, getPort(), METRICS_PATH});
+            LOGGER.info("Metrics endpoint listening on http://{}:{}{}",
+                    host, getPort(), METRICS_PATH);
             return true;
         } catch (IOException e) {
             // Non-fatal by design: an unavailable metrics port must not keep
             // the database from starting (the endpoint is observability-only).
-            LOGGER.log(Level.WARNING,
-                    "Metrics endpoint could not bind {0}:{1}, continuing without /metrics: {2}",
-                    new Object[]{host, port, e.getMessage()});
+            LOGGER.warn(
+                    "Metrics endpoint could not bind {}:{}, continuing without /metrics: {}",
+                    host, port, e.getMessage());
             return false;
         }
     }
@@ -123,8 +123,8 @@ public final class MetricsHttpServer {
         running = false;
         server = null;
         local.stop(0);
-        LOGGER.log(Level.INFO, "Metrics endpoint stopped after {0} request(s)",
-                handledRequests.get());
+LOGGER.info("Metrics endpoint stopped after {} request(s)",
+                    handledRequests.get());
     }
 
     /**
@@ -172,7 +172,7 @@ public final class MetricsHttpServer {
             }
             write(exchange, 200, PrometheusExporter.render(), PrometheusExporter.CONTENT_TYPE);
         } catch (RuntimeException e) {
-            LOGGER.log(Level.SEVERE, "Failed to render /metrics", e);
+            LOGGER.error("Failed to render /metrics", e);
             write(exchange, 500, "Internal Server Error\n", PrometheusExporter.CONTENT_TYPE);
         } finally {
             exchange.close();
@@ -205,7 +205,7 @@ public final class MetricsHttpServer {
             // HTTP status code directly; the JSON body carries diagnostic detail.
             write(exchange, result.up() ? 200 : 503, result.body(), HealthCheck.CONTENT_TYPE);
         } catch (RuntimeException e) {
-            LOGGER.log(Level.SEVERE, "Failed to render health endpoint", e);
+            LOGGER.error("Failed to render health endpoint", e);
             write(exchange, 500, "Internal Server Error\n", HealthCheck.CONTENT_TYPE);
         } finally {
             exchange.close();

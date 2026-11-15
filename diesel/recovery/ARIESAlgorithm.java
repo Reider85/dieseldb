@@ -5,7 +5,8 @@ import diesel.wal.WALManager;
 
 import java.io.IOException;
 import java.util.Objects;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ARIES recovery orchestration: analysis → redo → undo (prompt 4 #19 /
@@ -31,7 +32,7 @@ import java.util.logging.Logger;
  */
 public final class ARIESAlgorithm {
 
-    private static final Logger LOGGER = Logger.getLogger(ARIESAlgorithm.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ARIESAlgorithm.class);
 
     private ARIESAlgorithm() {
         // utility class
@@ -75,8 +76,8 @@ public final class ARIESAlgorithm {
         Objects.requireNonNull(wal, "wal");
         Objects.requireNonNull(pages, "pages");
 
-        LOGGER.fine(() -> "ARIES recovery starting (wal=" + wal.getSegments().size()
-                + " segment(s), checkpoint=" + (checkpoint != null ? checkpoint.getLastLSN() : "none") + ")");
+        LOGGER.debug("ARIES recovery starting (wal={} segment(s), checkpoint={})",
+                wal.getSegments().size(), checkpoint != null ? checkpoint.getLastLSN() : "none");
 
         try {
             AnalysisResult analysis = AnalysisPhase.analyze(wal, checkpoint);
@@ -85,7 +86,7 @@ public final class ARIESAlgorithm {
                     ? UndoPhase.undo(wal, analysis.getActive(), undoSink)
                     : new UndoResult(0, 0, 0, 0, analysis.getLastLSN());
 
-            LOGGER.fine(() -> "ARIES recovery done: " + new RecoveryResult(analysis, redo, undo));
+            LOGGER.debug("ARIES recovery done: {}", new RecoveryResult(analysis, redo, undo));
             return new RecoveryResult(analysis, redo, undo);
         } finally {
             // Clear recovery cache to free memory before serving traffic

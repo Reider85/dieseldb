@@ -5,7 +5,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Server-side cursor for paginated query results (Prompt 81).
@@ -23,7 +24,7 @@ import java.util.logging.Logger;
  * </ul>
  */
 final class Cursor {
-    private static final Logger LOGGER = Logger.getLogger(Cursor.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(Cursor.class);
 
     private final UUID id;
     private final String query;
@@ -39,7 +40,7 @@ final class Cursor {
         this.iterator = iterator;
         this.closed = false;
         this.totalFetched = 0;
-        LOGGER.fine("Cursor opened: " + id + " for query: " + query + " fetchSize=" + fetchSize);
+        LOGGER.debug("Cursor opened: {} for query: {} fetchSize={}", id, query, fetchSize);
     }
 
     UUID getId() {
@@ -77,7 +78,7 @@ final class Cursor {
      */
     synchronized List<Map<String, Object>> fetch() {
         if (closed) {
-            LOGGER.fine("Fetch on closed cursor: " + id);
+            LOGGER.debug("Fetch on closed cursor: {}", id);
             return List.of();
         }
         List<Map<String, Object>> batch = new ArrayList<>(fetchSize);
@@ -88,7 +89,7 @@ final class Cursor {
         }
         totalFetched += batch.size();
         if (!iterator.hasNext()) {
-            LOGGER.fine("Cursor " + id + " exhausted after " + totalFetched + " total rows");
+            LOGGER.debug("Cursor {} exhausted after {} total rows", id, totalFetched);
         }
         return batch;
     }
@@ -102,6 +103,6 @@ final class Cursor {
             return;
         }
         closed = true;
-        LOGGER.fine("Cursor closed: " + id + " (totalFetched=" + totalFetched + ")");
+        LOGGER.debug("Cursor closed: {} (totalFetched={})", id, totalFetched);
     }
 }

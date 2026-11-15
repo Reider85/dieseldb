@@ -6,8 +6,8 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Scheduled backup runner (prompt4 #42, R3-011 step 3/4).
@@ -37,7 +37,7 @@ public final class BackupScheduler {
     public static final String SCHEDULE_KEY = "backup.schedule";
     public static final String DEFAULT_SCHEDULE = "0 2 * * *";
 
-    private static final Logger LOGGER = Logger.getLogger(BackupScheduler.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(BackupScheduler.class);
 
     private final Runnable action;
     private final CronExpression cron;
@@ -102,7 +102,7 @@ public final class BackupScheduler {
         t.setDaemon(true);
         worker = t;
         t.start();
-        LOGGER.info(() -> "BackupScheduler started, cron='" + cron.source + "'");
+        LOGGER.info("BackupScheduler started, cron='{}'", cron.source);
     }
 
     /** Stops the scheduler and wakes the sleeping worker; idempotent. */
@@ -150,7 +150,7 @@ public final class BackupScheduler {
                 action.run();
             } catch (Throwable t) {
                 // A failed backup must not kill the schedule.
-                LOGGER.log(Level.WARNING, "Scheduled backup failed", t);
+                LOGGER.warn("Scheduled backup failed", t);
             }
         }
         nextRun = null;

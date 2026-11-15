@@ -12,8 +12,8 @@ import java.util.Objects;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 import java.util.UUID;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import diesel.storage.json.JsonPathResolver;
 import diesel.storage.json.JsonParserConfig;
 
@@ -23,7 +23,7 @@ import diesel.storage.json.JsonParserConfig;
  * SQL three-valued logic condition evaluation.
  */
 class ConditionEvaluator {
-    private static final Logger LOGGER = Logger.getLogger(ConditionEvaluator.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(ConditionEvaluator.class);
 
     /**
      * Evaluates a list of conditions using SQL three-valued logic with short-circuit evaluation.
@@ -98,7 +98,7 @@ class ConditionEvaluator {
 
         Object rowValue = resolveRowValue(row, condition.column, config);
         if (rowValue == null) {
-            LOGGER.log(Level.FINE, "Row value for column {0} is null, condition is UNKNOWN", condition.column);
+            LOGGER.debug("Row value for column {} is null, condition is UNKNOWN", condition.column);
             return UNKNOWN;
         }
 
@@ -108,16 +108,16 @@ class ConditionEvaluator {
 
         Object conditionValue = convertConditionValue(condition.value, condition.column, rowValue.getClass());
         if (conditionValue == null) {
-            LOGGER.log(Level.FINE, "Condition value for column {0} is null, condition is UNKNOWN", condition.column);
+            LOGGER.debug("Condition value for column {} is null, condition is UNKNOWN", condition.column);
             return UNKNOWN;
         }
-        LOGGER.log(Level.FINE, "Condition values: rowValue={0}, conditionValue={1}, column={2}, operator={3}",
+        LOGGER.debug("Condition values: rowValue={}, conditionValue={}, column={}, operator={}",
                 new Object[]{rowValue, conditionValue, condition.column, condition.operator});
 
         boolean result = evaluateOperatorCondition(rowValue, conditionValue, condition, collations);
 
         result = condition.not ? !result : result;
-        LOGGER.log(Level.FINE, "Evaluated condition: {0}, rowValue: {1}, conditionValue: {2}, result: {3}",
+        LOGGER.debug("Evaluated condition: {}, rowValue: {}, conditionValue: {}, result: {}",
                 new Object[]{condition, rowValue, conditionValue, result});
         return result ? TRUE : FALSE;
     }
@@ -128,7 +128,7 @@ class ConditionEvaluator {
      * the PROFL column.
      */
     private Object resolveRowValue(Map<String, Object> row, String columnKey, JsonParserConfig config) {
-        LOGGER.log(Level.INFO, "ConditionEvaluator.resolveRowValue called with columnKey: {0}, nested mode: {1}", 
+        LOGGER.info("ConditionEvaluator.resolveRowValue called with columnKey: {}, nested mode: {}",
                 new Object[]{columnKey, config.nestedMode()});
         Object direct = row.get(columnKey);
         if (direct != null) {
@@ -149,7 +149,7 @@ class ConditionEvaluator {
             if (resolved.columnIndex() >= 0 && !resolved.segments().isEmpty()) {
                 Object baseValue = row.get(resolved.column());
                 if (baseValue instanceof String jsonText) {
-                    LOGGER.log(Level.INFO, "ConditionExtractor calling JsonPathResolver.extract with segments: {0}, nested mode: {1}", 
+                    LOGGER.info("ConditionExtractor calling JsonPathResolver.extract with segments: {}, nested mode: {}",
                             new Object[]{resolved.segments(), config.nestedMode()});
                     return JsonPathResolver.extract(jsonText, resolved.segments(), config);
                 }
@@ -169,7 +169,7 @@ private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, Query
         Object value = row.get(condition.column);
         boolean isNull = value == null;
         boolean result = condition.operator == QueryParser.Operator.IS_NULL ? isNull : !isNull;
-        LOGGER.log(Level.FINE, "Evaluated IS NULL condition: {0}, value: {1}, result: {2}",
+        LOGGER.debug("Evaluated IS NULL condition: {}, value: {}, result: {}",
                 new Object[]{condition, value, result});
         boolean finalResult = condition.not ? !result : result;
         return finalResult ? TRUE : FALSE;
@@ -187,7 +187,7 @@ private ThreeValuedLogic evaluateGroupedCondition(Map<String, Object> row, Query
             }
         }
         boolean result = condition.not ? !inResult : inResult;
-        LOGGER.log(Level.FINE, "Evaluated IN condition: {0}, rowValue: {1}, values: {2}, result: {3}",
+        LOGGER.debug("Evaluated IN condition: {}, rowValue: {}, values: {}, result: {}",
                 new Object[]{condition, rowValue, condition.inValues, result});
         return result ? TRUE : FALSE;
     }

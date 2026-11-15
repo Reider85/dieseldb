@@ -10,8 +10,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ARIES analysis phase: scans the WAL from the last checkpoint to the end of the
@@ -50,7 +50,7 @@ import java.util.logging.Logger;
  */
 public final class AnalysisPhase {
 
-    private static final Logger LOGGER = Logger.getLogger(AnalysisPhase.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AnalysisPhase.class);
 
     private AnalysisPhase() {
         // utility class
@@ -140,7 +140,7 @@ public final class AnalysisPhase {
                 }
                 return reseeded;
             } catch (CheckpointFormatException e) {
-                LOGGER.log(Level.WARNING, "Skipping corrupt CHECKPOINT record at LSN "
+                LOGGER.warn("Skipping corrupt CHECKPOINT record at LSN "
                         + entry.getLsn() + ": " + e.getMessage());
                 return active; // unchanged reference on corrupt record
             }

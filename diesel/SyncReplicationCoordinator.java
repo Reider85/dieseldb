@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.stream.Collectors;
 
 /**
@@ -33,7 +33,7 @@ import java.util.stream.Collectors;
  */
 public final class SyncReplicationCoordinator {
     
-    private static final Logger LOGGER = Logger.getLogger(SyncReplicationCoordinator.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SyncReplicationCoordinator.class);
     
     /** Synchronous commit modes. */
     public enum SyncMode {
@@ -69,8 +69,8 @@ public final class SyncReplicationCoordinator {
         this.requiredStandbyNames = parseRequiredStandbyNames();
         this.timeoutMs = ConfigLoader.getLong("synchronous_commit.timeout.ms", DEFAULT_TIMEOUT_MS);
         
-        LOGGER.log(Level.INFO, "SyncReplicationCoordinator initialized: mode={0}, standbys={1}, timeout={2}ms",
-                new Object[]{syncMode, requiredStandbyNames, timeoutMs});
+        LOGGER.info("SyncReplicationCoordinator initialized: mode={}, standbys={}, timeout={}ms",
+                syncMode, requiredStandbyNames, timeoutMs);
     }
     
     /**
@@ -82,22 +82,22 @@ public final class SyncReplicationCoordinator {
      */
     public boolean submitCommit(Transaction transaction, long commitLsn) {
         if (!running.get()) {
-            LOGGER.warning("SyncReplicationCoordinator is not running");
+            LOGGER.warn("SyncReplicationCoordinator is not running");
             return true; // Allow commit if coordinator is stopped
         }
         
         if (syncMode == SyncMode.OFF) {
-            LOGGER.fine("Synchronous replication disabled: commit proceeding without standby wait");
+            LOGGER.debug("Synchronous replication disabled: commit proceeding without standby wait");
             return true;
         }
         
         if (requiredStandbyNames.isEmpty()) {
-            LOGGER.warning("Synchronous replication enabled but no standbys configured");
+            LOGGER.warn("Synchronous replication enabled but no standbys configured");
             return true; // No standbys to wait for
         }
         
         if (syncMode == SyncMode.LOCAL) {
-            LOGGER.fine("Synchronous replication LOCAL mode: commit proceeding after local write");
+            LOGGER.debug("Synchronous replication LOCAL mode: commit proceeding after local write");
             return true;
         }
         
@@ -146,15 +146,15 @@ public final class SyncReplicationCoordinator {
         activeCollectors.put(commitLsn, collector);
         
         try {
-            LOGGER.log(Level.FINE, "Waiting for {0} standby ACKs for commit LSN {1}",
-                    new Object[]{requiredStandbyNames.size(), commitLsn});
+            LOGGER.debug("Waiting for {} standby ACKs for commit LSN {}",
+                    requiredStandbyNames.size(), commitLsn);
             
             boolean success = collector.waitForAcks(timeoutMs);
             
             if (success) {
-                LOGGER.log(Level.INFO, "Commit LSN {0} confirmed by all required standbys", commitLsn);
+                LOGGER.info("Commit LSN {} confirmed by all required standbys", commitLsn);
             } else {
-                LOGGER.log(Level.WARNING, "Commit LSN {0} timed out waiting for standby ACKs", commitLsn);
+                LOGGER.warn("Commit LSN {} timed out waiting for standby ACKs", commitLsn);
             }
             
             return success;
@@ -171,7 +171,7 @@ public final class SyncReplicationCoordinator {
         try {
             return SyncMode.valueOf(modeStr.toUpperCase());
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Invalid synchronous_commit mode '{0}', using default 'off'", modeStr);
+            LOGGER.warn("Invalid synchronous_commit mode '{}', using default 'off'", modeStr);
             return SyncMode.OFF;
         }
     }
@@ -237,7 +237,7 @@ public final class SyncReplicationCoordinator {
                             .allMatch(ack -> ack.isUpToDate(commitLsn));
                     
                     if (!allUpToDate) {
-                        LOGGER.log(Level.WARNING, "Some standbys were not up-to-date for commit LSN {0}", commitLsn);
+                        LOGGER.warn("Some standbys were not up-to-date for commit LSN {}", commitLsn);
                         return false;
                     }
                     
@@ -247,7 +247,7 @@ public final class SyncReplicationCoordinator {
                 return false;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                LOGGER.log(Level.WARNING, "Interrupted waiting for standby ACKs for commit LSN {0}", commitLsn);
+                LOGGER.warn("Interrupted waiting for standby ACKs for commit LSN {}", commitLsn);
                 return false;
             }
         }
@@ -255,8 +255,8 @@ public final class SyncReplicationCoordinator {
         public void abort(Throwable reason) {
             if (aborted.compareAndSet(false, true)) {
                 completionLatch.countDown();
-                LOGGER.log(Level.WARNING, "Aborting ACK collection for commit LSN {0}: {1}",
-                        new Object[]{commitLsn, reason.getMessage()});
+                LOGGER.warn("Aborting ACK collection for commit LSN {}: {}",
+                        commitLsn, reason.getMessage());
             }
         }
     }

@@ -7,8 +7,8 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Engine-bound applier for point-in-time recovery (prompt 4 #43): realizes the
@@ -40,7 +40,7 @@ import java.util.logging.Logger;
  */
 public final class DatabasePitrSink implements PitrSink {
 
-    private static final Logger LOGGER = Logger.getLogger(DatabasePitrSink.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DatabasePitrSink.class);
 
     private final Database database;
     private final TxStatusTracker tracker;
@@ -63,7 +63,7 @@ public final class DatabasePitrSink implements PitrSink {
             throws IOException {
         Table t = database.findTable(table);
         if (t == null) {
-            LOGGER.log(Level.WARNING, "PITR: unknown table in INSERT: " + table);
+            LOGGER.warn("PITR: unknown table in INSERT: {}", table);
             return -1;
         }
         int rawCount = t.getRawRowCount();
@@ -84,7 +84,7 @@ public final class DatabasePitrSink implements PitrSink {
             return actual;
         } catch (RuntimeException e) {
             // Unique/type constraint or index skew: never corrupt, skip.
-            LOGGER.log(Level.WARNING, "PITR: skipping INSERT into " + table
+            LOGGER.warn("PITR: skipping INSERT into {}", table
                     + " at index " + rowIndex + ": " + e.getMessage());
             return -1;
         }
@@ -96,11 +96,11 @@ public final class DatabasePitrSink implements PitrSink {
             throws IOException {
         Table t = database.findTable(table);
         if (t == null) {
-            LOGGER.log(Level.WARNING, "PITR: unknown table in UPDATE: " + table);
+            LOGGER.warn("PITR: unknown table in UPDATE: {}", table);
             return 0;
         }
         if (rowIndex < 0 || rowIndex >= t.getRawRowCount()) {
-            LOGGER.log(Level.FINE, "PITR: UPDATE row index out of range in "
+            LOGGER.debug("PITR: UPDATE row index out of range in "
                     + table + "[" + rowIndex + "], skipping");
             return 0;
         }
@@ -109,7 +109,7 @@ public final class DatabasePitrSink implements PitrSink {
             return 0; // already at the after-image (idempotent re-run)
         }
         if (!DatabaseRecoverySink.valuesMatch(current, before)) {
-            LOGGER.log(Level.WARNING, "PITR: UPDATE values mismatch in "
+            LOGGER.warn("PITR: UPDATE values mismatch in "
                     + table + "[" + rowIndex + "], skipping");
             return 0;
         }
@@ -133,7 +133,7 @@ public final class DatabasePitrSink implements PitrSink {
         }
         Map<String, Object> current = t.getVisibleRowForReader(rowIndex);
         if (!DatabaseRecoverySink.valuesMatch(current, after)) {
-            LOGGER.log(Level.FINE, "PITR: hidden INSERT values mismatch in "
+            LOGGER.debug("PITR: hidden INSERT values mismatch in "
                     + table + "[" + rowIndex + "], leaving untouched");
             return 0;
         }
@@ -158,7 +158,7 @@ public final class DatabasePitrSink implements PitrSink {
             return 0; // already at the before-image
         }
         if (!DatabaseRecoverySink.valuesMatch(current, after)) {
-            LOGGER.log(Level.FINE, "PITR: hidden UPDATE values mismatch in "
+            LOGGER.debug("PITR: hidden UPDATE values mismatch in "
                     + table + "[" + rowIndex + "], leaving untouched");
             return 0;
         }

@@ -12,8 +12,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Applies streamed WAL entries to a hot-standby database (prompt4 #58,
@@ -55,7 +55,7 @@ import java.util.logging.Logger;
  */
 public final class StreamingApplier implements WalApplier {
 
-    private static final Logger LOGGER = Logger.getLogger(StreamingApplier.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(StreamingApplier.class);
 
     private final PitrSink sink;
 
@@ -292,13 +292,13 @@ public final class StreamingApplier implements WalApplier {
 
     private static CommitPayload decodeCommit(WALEntry entry, long lsn) {
         if (!entry.hasAfterImage()) {
-            LOGGER.log(Level.WARNING, "Streaming: COMMIT record without payload at LSN " + lsn);
+            LOGGER.warn("Streaming: COMMIT record without payload at LSN {}", lsn);
             return null;
         }
         try {
             return CommitPayload.deserialize(entry.getAfterImage());
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Streaming: malformed COMMIT payload at LSN "
+            LOGGER.warn("Streaming: malformed COMMIT payload at LSN "
                     + lsn + ", skipping finalize: " + e.getMessage());
             return null;
         }
@@ -306,14 +306,14 @@ public final class StreamingApplier implements WalApplier {
 
     private static DmlPayload decodeDml(byte[] data, long lsn, WALOpcode op) {
         if (data == null || data.length == 0) {
-            LOGGER.log(Level.WARNING, "Streaming: " + op + " record without payload at LSN " + lsn);
+            LOGGER.warn("Streaming: {} record without payload at LSN {}", op, lsn);
             return null;
         }
         try {
             return DmlPayload.deserialize(data);
         } catch (IllegalArgumentException e) {
-            LOGGER.log(Level.WARNING, "Streaming: malformed " + op + " payload at LSN "
-                    + lsn + ", skipping entry: " + e.getMessage());
+            LOGGER.warn("Streaming: malformed {} payload at LSN "
+                    + lsn + ", skipping entry: " + e.getMessage(), op);
             return null;
         }
     }

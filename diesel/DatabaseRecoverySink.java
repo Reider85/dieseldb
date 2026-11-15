@@ -8,8 +8,8 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Production MVCC sink for ARIES recovery (prompt 4 #19): implements both
@@ -53,7 +53,7 @@ import java.util.logging.Logger;
  */
 public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
 
-    private static final Logger LOGGER = Logger.getLogger(DatabaseRecoverySink.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(DatabaseRecoverySink.class);
 
     private final Database database;
     private final AtomicLong commitsReplayed = new AtomicLong();
@@ -83,7 +83,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         for (Map.Entry<String, int[]> entry : payload.getDeletedRows().entrySet()) {
             Table table = database.findTable(entry.getKey());
             if (table == null) {
-                LOGGER.log(Level.WARNING, "Recovery: unknown table in COMMIT payload: " + entry.getKey());
+                LOGGER.warn("Recovery: unknown table in COMMIT payload: {}", entry.getKey());
                 rowsSkipped.addAndGet(entry.getValue().length);
                 continue;
             }
@@ -91,8 +91,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
             // must be re-applied from the payload, mirroring executeCommit.
             for (int rowIndex : entry.getValue()) {
                 if (rowIndex < 0 || rowIndex >= table.getRawRowCount()) {
-                    LOGGER.log(Level.WARNING, "Recovery: deleted row index out of range: "
-                            + entry.getKey() + "[" + rowIndex + "]");
+                    LOGGER.warn("Recovery: deleted row index out of range: {} [{}]", entry.getKey(), rowIndex);
                     rowsSkipped.incrementAndGet();
                     continue;
                 }
@@ -104,7 +103,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         for (Map.Entry<String, int[]> entry : payload.getModifiedRows().entrySet()) {
             Table table = database.findTable(entry.getKey());
             if (table == null) {
-                LOGGER.log(Level.WARNING, "Recovery: unknown table in COMMIT payload: " + entry.getKey());
+                LOGGER.warn("Recovery: unknown table in COMMIT payload: {}", entry.getKey());
                 rowsSkipped.addAndGet(entry.getValue().length);
                 continue;
             }
@@ -112,7 +111,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
                 if (rowIndex < 0 || rowIndex >= table.getRawRowCount()) {
                     // Row never made it to disk (crash before the commit-time
                     // persist): nothing to stamp, the index no longer exists.
-                    LOGGER.log(Level.FINE, "Recovery: modified row index out of range: "
+                    LOGGER.debug("Recovery: modified row index out of range: "
                             + entry.getKey() + "[" + rowIndex + "]");
                     rowsSkipped.incrementAndGet();
                     continue;
@@ -134,7 +133,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
             return;
         }
         if (!valuesMatch(table, rowIndex, inserted)) {
-            LOGGER.log(Level.WARNING, "Recovery: INSERT undo values mismatch at "
+            LOGGER.warn("Recovery: INSERT undo values mismatch at "
                     + tableName + "[" + rowIndex + "], skipping");
             rowsSkipped.incrementAndGet();
             return;
@@ -163,7 +162,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
             return;
         }
         if (!valuesMatch(current, after)) {
-            LOGGER.log(Level.WARNING, "Recovery: UPDATE undo values mismatch at "
+            LOGGER.warn("Recovery: UPDATE undo values mismatch at "
                     + tableName + "[" + rowIndex + "], skipping");
             rowsSkipped.incrementAndGet();
             return;
@@ -184,7 +183,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
         if (table.isDeleted(rowIndex)) {
             // Uncommitted deletes are never tombstoned on disk; a tombstone
             // here means index skew — do not touch the wrong row.
-            LOGGER.log(Level.WARNING, "Recovery: DELETE undo found unexpected tombstone at "
+            LOGGER.warn("Recovery: DELETE undo found unexpected tombstone at "
                     + tableName + "[" + rowIndex + "], skipping");
             rowsSkipped.incrementAndGet();
             return;
@@ -222,7 +221,7 @@ public final class DatabaseRecoverySink implements MvccRedoSink, MvccUndoSink {
     private Table resolve(String tableName) {
         Table table = database.findTable(tableName);
         if (table == null) {
-            LOGGER.log(Level.WARNING, "Recovery: unknown table in DML record: " + tableName);
+            LOGGER.warn("Recovery: unknown table in DML record: {}", tableName);
         }
         return table;
     }

@@ -198,7 +198,7 @@ public class DieselLogConfig {
         LoggerContext loggerContext = (LoggerContext) LoggerFactory.getILoggerFactory();
         
         // Apply to root logger
-        loggerContext.getLogger(Logger.ROOT_LOGGER_NAME).setLevel(Level.toLevel(resolvedLevel));
+        loggerContext.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).setLevel(Level.toLevel(resolvedLevel));
         
         // Apply to diesel package logger for inheritance
         loggerContext.getLogger("diesel").setLevel(Level.toLevel(resolvedLevel));
@@ -321,7 +321,7 @@ public class DieselLogConfig {
                 // Apply to all loggers in this module
                 for (String loggerName : loggers) {
                     ch.qos.logback.classic.Logger logger = loggerContext.getLogger(loggerName);
-                    Level level = Level.toLevel(normalizedLevel);
+                    ch.qos.logback.classic.Level level = Level.toLevel(normalizedLevel);
                     logger.setLevel(level);
                     
                     // Set parent level for inheritance (e.g., diesel.wal for future loggers)

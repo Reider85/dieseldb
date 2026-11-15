@@ -9,8 +9,8 @@ import diesel.TxStatusTracker;
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.locks.ReadWriteLock;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Sharp checkpoint strategy (Prompt4 #53).
@@ -21,7 +21,7 @@ import java.util.logging.Logger;
  * @author DieselDB Team
  */
 public class SharpCheckpoint implements CheckpointStrategy {
-    private static final Logger LOGGER = Logger.getLogger(SharpCheckpoint.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(SharpCheckpoint.class);
     
     private final WALManager walManager;
     private final BufferPoolFlusher flusher;
@@ -109,7 +109,7 @@ public class SharpCheckpoint implements CheckpointStrategy {
             bufferPool.flushDirty();
             LOGGER.info("SharpCheckpoint: flushed all dirty pages (fallback)");
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "SharpCheckpoint: fallback flush failed: " + e.getMessage(), e);
+            LOGGER.warn("SharpCheckpoint: fallback flush failed: " + e.getMessage(), e);
             throw e;
         }
     }

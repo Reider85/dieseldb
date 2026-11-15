@@ -12,8 +12,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * System table holding the schema of every user table (prompt4 #9, R3-002).
@@ -34,7 +34,7 @@ import java.util.logging.Logger;
  */
 public final class CatalogTable implements AutoCloseable {
 
-    private static final Logger LOGGER = Logger.getLogger(CatalogTable.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(CatalogTable.class);
 
     /** Every tablespace keeps its catalog in page 0 (prompt4 #9). */
     static final PageId CATALOG_PAGE_ID = new PageId(0, 1, 0);
@@ -91,7 +91,7 @@ public final class CatalogTable implements AutoCloseable {
             } catch (IOException | RuntimeException e) {
                 throw new CatalogCorruptedException(e.getMessage(), e);
             }
-            LOGGER.log(Level.INFO, "Loaded {0} table schema(s) from catalog page 0", schemasByName.size());
+            LOGGER.info("Loaded {} table schema(s) from catalog page 0", schemasByName.size());
         }
     }
 
@@ -233,8 +233,7 @@ public final class CatalogTable implements AutoCloseable {
         }
         PageId allocated = pageManager.allocatePage(CATALOG_PAGE_ID.tablespaceId());
         if (!CATALOG_PAGE_ID.equals(allocated)) {
-            LOGGER.log(Level.WARNING, "Catalog page was allocated at {0}, expected {1}",
-                    new Object[]{allocated, CATALOG_PAGE_ID});
+            LOGGER.warn("Catalog page was allocated at {}, expected {}", allocated, CATALOG_PAGE_ID);
         }
     }
 
@@ -276,7 +275,7 @@ public final class CatalogTable implements AutoCloseable {
             try {
                 pageManager.close();
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to close catalog page manager: {0}", e.getMessage());
+                LOGGER.warn("Failed to close catalog page manager: {}", e.getMessage());
             }
         }
     }

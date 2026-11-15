@@ -10,8 +10,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * ARIES undo phase: reverses every logical DML record of a transaction that
@@ -59,7 +59,7 @@ import java.util.logging.Logger;
  */
 public final class UndoPhase {
 
-    private static final Logger LOGGER = Logger.getLogger(UndoPhase.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(UndoPhase.class);
 
     private UndoPhase() {
         // utility class
@@ -113,7 +113,7 @@ public final class UndoPhase {
                 switch (entry.getOp()) {
                     case INSERT -> {
                         if (!entry.hasAfterImage()) {
-                            LOGGER.log(Level.WARNING,
+                            LOGGER.warn(
                                     "Skipping INSERT record without after-image at LSN " + lsn);
                             ignored++;
                             continue;
@@ -129,7 +129,7 @@ public final class UndoPhase {
                     }
                     case UPDATE -> {
                         if (!entry.hasBeforeImage() || !entry.hasAfterImage()) {
-                            LOGGER.log(Level.WARNING,
+                            LOGGER.warn(
                                     "Skipping UPDATE record with missing image at LSN " + lsn);
                             ignored++;
                             continue;
@@ -146,8 +146,7 @@ public final class UndoPhase {
                     }
                     case DELETE -> {
                         if (!entry.hasBeforeImage()) {
-                            LOGGER.log(Level.WARNING,
-                                    "Skipping DELETE record without before-image at LSN " + lsn);
+LOGGER.warn("Skipping DELETE record without before-image at LSN " + lsn);
                             ignored++;
                             continue;
                         }
@@ -183,7 +182,7 @@ public final class UndoPhase {
         try {
             return DmlPayload.deserialize(data);
         } catch (RuntimeException e) {
-            LOGGER.log(Level.WARNING, "Skipping undecodable DML payload at LSN "
+            LOGGER.warn("Skipping undecodable DML payload at LSN "
                     + lsn + ": " + e.getMessage());
             return null;
         }

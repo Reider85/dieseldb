@@ -13,8 +13,8 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.zip.GZIPOutputStream;
 
 /**
@@ -42,7 +42,7 @@ import java.util.zip.GZIPOutputStream;
  */
 final class LegacyProtocolAdapter {
 
-    private static final Logger LOGGER = Logger.getLogger(LegacyProtocolAdapter.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(LegacyProtocolAdapter.class);
 
     /** Algorithm advertised by the legacy protocol (the only one it ever used). */
     private static final String DEFAULT_ALGORITHM = "GZIP";
@@ -89,15 +89,15 @@ final class LegacyProtocolAdapter {
      */
     void handleConnection(Socket clientSocket, int socketTimeout) throws IOException {
         this.clientSocket = clientSocket;
-        LOGGER.log(Level.WARNING,
-                "Legacy protocol (Java Object Serialization) connection from {0} - deprecated, "
+        LOGGER.warn(
+                "Legacy protocol (Java Object Serialization) connection from {} - deprecated, "
                         + "migrate the client to the v2 binary protocol",
                 clientSocket.getInetAddress());
         if (socketTimeout > 0) {
             try {
                 clientSocket.setSoTimeout(socketTimeout);
             } catch (SocketException e) {
-                LOGGER.log(Level.WARNING, "Failed to set legacy socket timeout: {0}", e.getMessage());
+                LOGGER.warn("Failed to set legacy socket timeout: {}", e.getMessage());
             }
         }
 
@@ -117,8 +117,8 @@ final class LegacyProtocolAdapter {
             try {
                 pending = in.readObject();
             } catch (SocketTimeoutException e) {
-                LOGGER.log(Level.WARNING, "Legacy client {0} timed out while reading first message: {1}",
-                        new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+                LOGGER.warn("Legacy client {} timed out while reading first message: {}",
+                        clientSocket.getInetAddress(), e.getMessage());
                 return; // Exit the connection on timeout
             }
             
@@ -137,15 +137,15 @@ final class LegacyProtocolAdapter {
                     Object message = in.readObject();
                     serving = dispatch(message);
                 } catch (SocketTimeoutException e) {
-                    LOGGER.log(Level.WARNING, "Legacy client {0} timed out while reading message: {1}",
-                            new Object[]{clientSocket.getInetAddress(), e.getMessage()});
+LOGGER.warn("Legacy client {} timed out while reading message: {}",
+                        clientSocket.getInetAddress(), e.getMessage());
                     break; // Exit the loop on timeout
                 }
             }
         } catch (EOFException e) {
-            LOGGER.log(Level.FINE, "Legacy client {0} closed the connection", clientSocket.getInetAddress());
+            LOGGER.debug("Legacy client {} closed the connection", clientSocket.getInetAddress());
         } catch (ClassNotFoundException e) {
-            LOGGER.log(Level.SEVERE, "Legacy client sent an unknown class", e);
+            LOGGER.error("Legacy client sent an unknown class", e);
             writeError("Error: Unknown message type");
         } finally {
             cleanup();
@@ -206,7 +206,7 @@ final class LegacyProtocolAdapter {
      * the client's level (1-9) and threshold when compression stays on.
      */
     private void handleLegacyCompressionHandshake(CompressionHandshakeMessage handshake) throws IOException {
-        LOGGER.log(Level.INFO, "Legacy compression handshake from client: {0}", handshake);
+        LOGGER.info("Legacy compression handshake from client: {}", handshake);
 
         String agreedAlgorithm = DEFAULT_ALGORITHM;
         int agreedLevel = compressionLevel;
@@ -243,8 +243,8 @@ final class LegacyProtocolAdapter {
             handleOutOfMemory(query, e);
         } catch (Exception e) {
             sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Query execution failed: {0}, Error: {1}",
-                    new Object[]{query, e.getMessage()});
+            LOGGER.error("Query execution failed: {}, Error: {}",
+                    query, e.getMessage());
         }
     }
 
@@ -255,8 +255,8 @@ final class LegacyProtocolAdapter {
         this.transactionId = pm.getTransactionId();
         out.writeObject(statementId);
         out.flush();
-        LOGGER.log(Level.INFO, "Prepared statement {0} from template: {1}",
-                new Object[]{statementId, pm.getSqlTemplate()});
+LOGGER.info("Prepared statement {} from template: {}",
+                    statementId, pm.getSqlTemplate());
     }
 
     private void handleExecutePrepared(ExecutePreparedMessage epm) throws IOException {
@@ -274,8 +274,8 @@ final class LegacyProtocolAdapter {
             handleOutOfMemory(ps.getSqlTemplate(), e);
         } catch (Exception e) {
             sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Prepared statement execution failed: {0}, Error: {1}",
-                    new Object[]{statementId, e.getMessage()});
+            LOGGER.error("Prepared statement execution failed: {}, Error: {}",
+                    statementId, e.getMessage());
         }
     }
 
@@ -287,7 +287,7 @@ final class LegacyProtocolAdapter {
         }
         out.writeObject("Prepared statement closed");
         out.flush();
-        LOGGER.log(Level.INFO, "Closed prepared statement {0}", cpm.getStatementId());
+        LOGGER.info("Closed prepared statement {}", cpm.getStatementId());
     }
 
     private void handleOpenCursor(OpenCursorMessage ocm) throws IOException {
@@ -301,14 +301,14 @@ final class LegacyProtocolAdapter {
             String cursorId = cursor.getId().toString();
             cursors.put(cursorId, cursor);
             sendSerializedResult(cursorId);
-            LOGGER.log(Level.INFO, "Opened cursor {0} for query: {1} (fetchSize={2})",
-                    new Object[]{cursorId, ocm.getQuery(), fetchSize});
+            LOGGER.info("Opened cursor {} for query: {} (fetchSize={})",
+                    cursorId, ocm.getQuery(), fetchSize);
         } catch (OutOfMemoryError e) {
             handleOutOfMemory(ocm.getQuery(), e);
         } catch (Exception e) {
             sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Open cursor failed: {0}, Error: {1}",
-                    new Object[]{ocm.getQuery(), e.getMessage()});
+            LOGGER.error("Open cursor failed: {}, Error: {}",
+                    ocm.getQuery(), e.getMessage());
         }
     }
 
@@ -326,8 +326,8 @@ final class LegacyProtocolAdapter {
             handleOutOfMemory("cursor fetch: " + fcm.getCursorId(), e);
         } catch (Exception e) {
             sendSerializedResult(ErrorMessages.ERROR_PREFIX + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Fetch cursor failed: {0}, Error: {1}",
-                    new Object[]{fcm.getCursorId(), e.getMessage()});
+            LOGGER.error("Fetch cursor failed: {}, Error: {}",
+                    fcm.getCursorId(), e.getMessage());
         }
     }
 
@@ -341,7 +341,7 @@ final class LegacyProtocolAdapter {
             out.writeObject("Cursor already closed");
         }
         out.flush();
-        LOGGER.log(Level.INFO, "Closed cursor {0}", ccm.getCursorId());
+        LOGGER.info("Closed cursor {}", ccm.getCursorId());
     }
 
     /** Batches keep the legacy contract: a bare list of per-query results. */
@@ -357,20 +357,19 @@ final class LegacyProtocolAdapter {
 
     private void handleOutOfMemory(String query, OutOfMemoryError e) {
         long usedBytes = Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory();
-        LOGGER.log(Level.SEVERE, "OutOfMemoryError while executing query: {0}", query);
-        LOGGER.log(Level.SEVERE,
-                "  Query context: rows produced={0}, peak memory used={1} bytes at {2} rows, heap used now={3} bytes, cause={4}",
-                new Object[]{
-                        SelectQuery.getLastQueryRowCount(),
-                        SelectQuery.getLastQueryPeakMemoryBytes(),
-                        SelectQuery.getLastQueryRowsAtPeak(),
-                        usedBytes,
-                        String.valueOf(e.getMessage())
-                });
+        LOGGER.error("OutOfMemoryError while executing query: {}", query);
+LOGGER.error(
+                    "  Query context: rows produced={}, peak memory used={} bytes at {} rows, heap used now={} bytes, cause={}",
+                    SelectQuery.getLastQueryRowCount(),
+                    SelectQuery.getLastQueryPeakMemoryBytes(),
+                    SelectQuery.getLastQueryRowsAtPeak(),
+                    usedBytes,
+                    e.getMessage()
+                    );
         try {
             sendSerializedResult("Error: Query exceeded memory limit. Consider adding LIMIT or indexes.");
         } catch (IOException io) {
-            LOGGER.log(Level.SEVERE, "Error sending OOM response to legacy client: {0}", io.getMessage());
+            LOGGER.error("Error sending OOM response to legacy client: {}", io.getMessage());
         }
     }
 
@@ -413,7 +412,7 @@ final class LegacyProtocolAdapter {
             }
             return baos.toByteArray();
         } catch (IOException e) {
-            LOGGER.log(Level.WARNING, "Compression failed, sending uncompressed: {0}", e.getMessage());
+            LOGGER.warn("Compression failed, sending uncompressed: {}", e.getMessage());
             return data;
         }
     }
@@ -432,9 +431,9 @@ final class LegacyProtocolAdapter {
             closeQuietly(in);
             closeQuietly(out);
             closeQuietly(clientSocket);
-            LOGGER.log(Level.INFO, "Legacy client disconnected: {0}", clientSocket.getInetAddress());
+            LOGGER.info("Legacy client disconnected: {}", clientSocket.getInetAddress());
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error cleaning up legacy client resources: {0}", e.getMessage());
+            LOGGER.error("Error cleaning up legacy client resources: {}", e.getMessage());
         }
     }
 
@@ -443,7 +442,7 @@ final class LegacyProtocolAdapter {
             try {
                 closeable.close();
             } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Error closing resource: {0}", e.getMessage());
+                LOGGER.warn("Error closing resource: {}", e.getMessage());
             }
         }
     }
