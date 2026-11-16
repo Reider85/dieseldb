@@ -114,7 +114,10 @@ jobs:
 
       - name: Run fast tests
         shell: bash
-        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast 2>&1 | tee test.log
+        run: |
+          stamp=$(mktemp)
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast 2>&1 | tee test.log
+          ./scripts/assert-tests-ran.sh "$stamp"
 
       - name: Generate coverage report
         if: success()
