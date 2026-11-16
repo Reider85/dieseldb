@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | tr -d '\r' | tail -n 1)
+          BASE=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '\r' | awk 'NF{p=$0} END{print p}')
           case "$BASE" in
             [0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "ERROR: cannot parse project.version from pom.xml (got: '$BASE')"; exit 1 ;;
@@ -100,7 +100,7 @@ jobs:
           grep -E 'ERROR|BUILD FAILURE' build.log | head -n 30 || true
 
       - name: Create and push tag
-        if: steps.guard.outputs.exists == 'false'
+        if: success() && steps.guard.outputs.exists == 'false'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
