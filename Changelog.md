@@ -1027,3 +1027,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.43 CI3 completion: Fix all three failing smoke tests (CheckpointManagerTest, WALBackpressureTest, AuditAsyncTest) to unblock release pipeline
 
 3.4.44 SLF4J migration completed - replaced java.util.logging with SLF4J throughout the codebase
+
+3.4.45 Fix CI test report generation by adding assert-tests-ran.sh guard
