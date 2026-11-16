@@ -1,1 +1,1 @@
-3.4.46 Synchronize pom.xml version with current commit series (CI4-P6)
+3.4.47 Synchronize pom.xml version with current commit series (CI4-P6)
