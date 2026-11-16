@@ -50,8 +50,15 @@ public class InplaceTest {
     @AfterEach
     void tearDown() {
         if (database != null) {
-            database.close();
+            try {
+                database.close();
+            } catch (Exception e) {
+                // Log but continue with cleanup
+                System.err.println("Error closing database: " + e.getMessage());
+            }
         }
+        // Force garbage collection to help with file handle cleanup
+        System.gc();
     }
 
     @Test

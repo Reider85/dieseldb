@@ -11,11 +11,12 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
 import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -178,36 +179,26 @@ public class MaxResultRowsTest {
 
     @Test
     void warningLoggedAt80PercentOfLimit() {
-        Logger logger = Logger.getLogger("diesel.SelectQuery");
-        List<LogRecord> captured = new java.util.ArrayList<>();
-        Handler handler = new Handler() {
+        Logger logger = LoggerFactory.getLogger("diesel.SelectQuery");
+        List<ILoggingEvent> captured = new java.util.ArrayList<>();
+        AppenderBase<ILoggingEvent> appender = new AppenderBase<ILoggingEvent>() {
             @Override
-            public void publish(LogRecord logRecord) {
-                captured.add(logRecord);
-            }
-
-            @Override
-            public void flush() {
-                // no-op
-            }
-
-            @Override
-            public void close() {
-                // no-op
+            protected void append(ILoggingEvent event) {
+                captured.add(event);
             }
         };
-        logger.addHandler(handler);
+        ((ch.qos.logback.classic.Logger) logger).addAppender(appender);
         try {
             SelectQuery.setMaxResultRowsForTest(100);
             List<Map<String, Object>> result = runSelect("SELECT * FROM MRT_LEFT");
             assertEquals(LEFT_COUNT, result.size());
-            assertTrue(captured.stream().anyMatch(record ->
-                            record.getLevel() == Level.WARNING
-                                    && record.getMessage() != null
-                                    && record.getMessage().contains("approaching the maximum allowed row limit")),
+            assertTrue(captured.stream().anyMatch(event ->
+                            event.getLevel() == ch.qos.logback.classic.Level.WARN
+                                    && event.getMessage() != null
+                                    && event.getMessage().contains("approaching the maximum allowed row limit")),
                     "a query reaching 80% of the limit must log a single warning");
         } finally {
-            logger.removeHandler(handler);
+            ((ch.qos.logback.classic.Logger) logger).detachAppender(appender);
         }
     }
 }

@@ -18,10 +18,11 @@ import java.util.List;
 import java.util.Map;
 import java.time.LocalDateTime;
 import java.util.UUID;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -142,25 +143,15 @@ public class OomHandlingTest {
 
     @Test
     void oomLogsQueryContext() throws Exception {
-        Logger logger = Logger.getLogger("diesel.DatabaseServer");
-        List<LogRecord> captured = new ArrayList<>();
-        Handler handler = new Handler() {
+        Logger logger = LoggerFactory.getLogger("diesel.DatabaseServer");
+        List<ILoggingEvent> captured = new ArrayList<>();
+        AppenderBase<ILoggingEvent> appender = new AppenderBase<ILoggingEvent>() {
             @Override
-            public void publish(LogRecord logRecord) {
-                captured.add(logRecord);
-            }
-
-            @Override
-            public void flush() {
-                // no-op
-            }
-
-            @Override
-            public void close() {
-                // no-op
+            protected void append(ILoggingEvent event) {
+                captured.add(event);
             }
         };
-        logger.addHandler(handler);
+        ((ch.qos.logback.classic.Logger) logger).addAppender(appender);
         try {
             int port = freePort();
             DatabaseServer server = new DatabaseServer(port, 5000, new OomThrowingDatabase(tempDir.toString()));
@@ -173,17 +164,17 @@ public class OomHandlingTest {
                 server.stop();
                 serverThread.interrupt();
             }
-            assertTrue(captured.stream().anyMatch(record -> record.getLevel() == Level.SEVERE
-                            && formatRecord(record).contains("OutOfMemoryError while executing query")
-                            && formatRecord(record).contains("SELECT * FROM USERS")),
+            assertTrue(captured.stream().anyMatch(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR
+                            && formatEvent(event).contains("OutOfMemoryError while executing query")
+                            && formatEvent(event).contains("SELECT * FROM USERS")),
                     "the server must log the query text of the OOM");
-            assertTrue(captured.stream().anyMatch(record -> record.getLevel() == Level.SEVERE
-                            && record.getMessage() != null
-                            && record.getMessage().contains("rows produced=")
-                            && record.getMessage().contains("peak memory used=")),
+            assertTrue(captured.stream().anyMatch(event -> event.getLevel() == ch.qos.logback.classic.Level.ERROR
+                            && event.getMessage() != null
+                            && event.getMessage().contains("rows produced=")
+                            && event.getMessage().contains("peak memory used=")),
                     "the server must log the row count and peak memory context of the OOM query");
         } finally {
-            logger.removeHandler(handler);
+            ((ch.qos.logback.classic.Logger) logger).detachAppender(appender);
         }
     }
 
@@ -271,11 +262,11 @@ public class OomHandlingTest {
         }
     }
 
-    private static String formatRecord(LogRecord logRecord) {
-        if (logRecord.getParameters() == null || logRecord.getParameters().length == 0) {
-            return logRecord.getMessage();
+    private static String formatEvent(ILoggingEvent event) {
+        if (event.getArgumentArray() == null || event.getArgumentArray().length == 0) {
+            return event.getMessage();
         }
-        return java.text.MessageFormat.format(logRecord.getMessage(), logRecord.getParameters());
+        return String.format(event.getMessage(), event.getArgumentArray());
     }
 
     private static int freePort() throws IOException {

@@ -20,10 +20,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.LogRecord;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 import java.util.zip.GZIPInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -125,33 +126,23 @@ public class LegacyCompatTest {
 
     @Test
     void legacyConnectionIsLoggedAsDeprecated() throws Exception {
-        Logger logger = Logger.getLogger("diesel.LegacyProtocolAdapter");
-        List<LogRecord> captured = new ArrayList<>();
-        Handler handler = new Handler() {
+        Logger logger = LoggerFactory.getLogger("diesel.LegacyProtocolAdapter");
+        List<ILoggingEvent> captured = new ArrayList<>();
+        AppenderBase<ILoggingEvent> appender = new AppenderBase<ILoggingEvent>() {
             @Override
-            public void publish(LogRecord record) {
-                captured.add(record);
-            }
-
-            @Override
-            public void flush() {
-                // no-op
-            }
-
-            @Override
-            public void close() {
-                // no-op
+            protected void append(ILoggingEvent event) {
+                captured.add(event);
             }
         };
-        logger.addHandler(handler);
+        ((ch.qos.logback.classic.Logger) logger).addAppender(appender);
         try (LegacyClient client = LegacyClient.open(legacyPort)) {
             client.send(new QueryMessage("SELECT ID FROM LEGACY_T WHERE ID = 1", null));
             assertTrue(client.readResult() instanceof List);
         } finally {
-            logger.removeHandler(handler);
+            ((ch.qos.logback.classic.Logger) logger).detachAppender(appender);
         }
-        assertTrue(captured.stream().anyMatch(record -> record.getLevel() == Level.WARNING
-                        && formatRecord(record).toLowerCase().contains("deprecated")),
+        assertTrue(captured.stream().anyMatch(event -> event.getLevel() == ch.qos.logback.classic.Level.WARN
+                        && formatEvent(event).toLowerCase().contains("deprecated")),
                 "the adapter must warn that the legacy protocol is deprecated, got "
                         + captured.size() + " record(s)");
     }
@@ -294,11 +285,11 @@ public class LegacyCompatTest {
         }, Duration.ofSeconds(15));
     }
 
-    private static String formatRecord(LogRecord record) {
-        if (record.getParameters() == null || record.getParameters().length == 0) {
-            return String.valueOf(record.getMessage());
+    private static String formatEvent(ILoggingEvent event) {
+        if (event.getArgumentArray() == null || event.getArgumentArray().length == 0) {
+            return String.valueOf(event.getMessage());
         }
-        return java.text.MessageFormat.format(record.getMessage(), record.getParameters());
+        return String.format(event.getMessage(), event.getArgumentArray());
     }
 
     private static Object col(Map<String, Object> row, String name) {

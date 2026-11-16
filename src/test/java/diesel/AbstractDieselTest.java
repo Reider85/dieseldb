@@ -12,8 +12,8 @@ import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Base class for small DieselDB test classes.  Each concrete subclass sets
@@ -23,7 +23,7 @@ import java.util.logging.Logger;
  */
 public abstract class AbstractDieselTest {
 
-    private static final Logger LOGGER = Logger.getLogger(AbstractDieselTest.class.getName());
+    private static final Logger LOGGER = LoggerFactory.getLogger(AbstractDieselTest.class);
     protected static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     /** Committed CSV fixtures (TESTS-9), relative to the repo-root CWD. */
@@ -105,7 +105,7 @@ public abstract class AbstractDieselTest {
         database.getTable("TRANSACTIONS").saveToFile("TRANSACTIONS");
         database.getTable("USER_DETAILS").saveToFile("USER_DETAILS");
 
-        LOGGER.log(Level.INFO, "Setup completed: {0} records per table (bulk-loaded)", n);
+        LOGGER.info("Setup completed: {} records per table (bulk-loaded)", n);
     }
 
     /* ------------------------------------------------------------------ */
@@ -115,10 +115,10 @@ public abstract class AbstractDieselTest {
     protected void check(boolean condition, String message) {
         if (condition) {
             passed++;
-            LOGGER.log(Level.INFO, "PASS: {0}", message);
+            LOGGER.info("PASS: {}", message);
         } else {
             failed++;
-            LOGGER.log(Level.SEVERE, "FAIL: {0}", message);
+            LOGGER.error("FAIL: {}", message);
         }
     }
 
@@ -137,7 +137,7 @@ public abstract class AbstractDieselTest {
             }
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+            LOGGER.error("{} / {} query: {}", group, name, query);
         }
     }
 
@@ -147,7 +147,7 @@ public abstract class AbstractDieselTest {
             check(true, group + " / " + name + " executed");
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+            LOGGER.error("{} / {} query: {}", group, name, query);
         }
     }
 
@@ -167,7 +167,7 @@ public abstract class AbstractDieselTest {
             }
         } catch (Exception e) {
             check(false, group + " / " + name + " failed: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "{0} / {1} query: {2}", new Object[]{group, name, query});
+            LOGGER.error("{} / {} query: {}", group, name, query);
         }
     }
 
@@ -175,7 +175,7 @@ public abstract class AbstractDieselTest {
         try {
             database.dropTable(name);
         } catch (TableNotFoundException e) {
-            LOGGER.log(Level.WARNING, "Table {0} not found for dropping", name);
+            LOGGER.warn("Table {} not found for dropping", name);
         }
     }
 
@@ -186,7 +186,7 @@ public abstract class AbstractDieselTest {
                 return ((List<?>) result).size();
             }
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "countRows failed for {0}: {1}", new Object[]{query, e.getMessage()});
+            LOGGER.error("countRows failed for {}: {}", query, e.getMessage());
         }
         return -1;
     }
