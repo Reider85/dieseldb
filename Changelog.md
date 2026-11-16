@@ -1031,3 +1031,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.45 Fix CI test report generation by adding assert-tests-ran.sh guard
 
 3.4.46 Synchronize pom.xml version with current commit series (CI4-P6)
+
+3.4.47 Synchronize pom.xml version with current commit series (CI4-P6)
