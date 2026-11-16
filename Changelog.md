@@ -1083,3 +1083,6 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.71 CI5-P6: Add release health diagnostic workflow
 
 3.4.72 CI5-P8: Clean up ci.yml fast job and workflow-summary indentation
+
+
+3.4.45 Fix CI test report generation by adding assert-tests-ran.sh guard
