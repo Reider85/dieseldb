@@ -465,9 +465,9 @@ jobs:
           restore-keys: |
             buildcache-${{ matrix.os }}-${{ matrix.jdk }}-flaky-
             buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
-            buildcache-${{ matrix.os }}-
+buildcache-${{ matrix.os }}- 
 
-- name: Detect orphaned test classes
+      - name: Detect orphaned test classes
         run: |
           src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
@@ -480,11 +480,11 @@ jobs:
         run: powershell -ExecutionPolicy Bypass -File ./scripts/check-flaky-jsonl-compat.ps1
 
        # TESTS-5: four invocations, together all 5 quarantined @Tag("flaky") tests,
-      # ordered so the load-sensitive assertions run first on a settled runner
-      # (NO clean: a full recompile right before the p99 test measured 42ms).
-      # Step 1 gets ONE isolated retry (AGENTS.md Known-Flakes protocol); steps
-      # 2-4 use if:always() so a red flake never hides the other results.
-      # Red = the signal that a quarantined flake got worse; gates stay green.
+       # ordered so the load-sensitive assertions run first on a settled runner
+       # (NO clean: a full recompile right before the p99 test measured 42ms).
+       # Step 1 gets ONE isolated retry (AGENTS.md Known-Flakes protocol); steps
+       # 2-4 use if:always() so a red flake never hides the other results.
+       # Red = the signal that a quarantined flake got worse; gates stay green.
       - name: Run quarantined WAL group-commit acceptance (idle runner)
         run: |
           if ! mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P flaky -Dtest=GroupCommitThroughputTest; then
