@@ -2,7 +2,7 @@
 
 > **Production-grade Java database engine with ARIES recovery, WAL, page-based storage, online schema changes, and SSI concurrency control**
 > 
-> CI4-P8: Testing auto-generated release notes
+> 
 >
 > A modern, embeddable and client-server database engine written in Java 21 (LTS) featuring crash recovery with ARIES, write-ahead logging with group commit, page-based storage with MVCC, online schema changes, RBAC security, and full PostgreSQL protocol compatibility.
 >
