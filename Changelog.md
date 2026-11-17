@@ -1028,8 +1028,58 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 
 3.4.44 SLF4J migration completed - replaced java.util.logging with SLF4J throughout the codebase
 
-3.4.45 Fix CI test report generation by adding assert-tests-ran.sh guard
+3.4.45 SLF4J migration completed - replaced java.util.logging with SLF4J throughout the codebase
 
-3.4.46 Synchronize pom.xml version with current commit series (CI4-P6)
+3.4.46 CI4-P2: fix fast profile tests after SLF4J migration
 
-3.4.47 Synchronize pom.xml version with current commit series (CI4-P6)
+3.4.47 Fix CI test report generation by adding assert-tests-ran.sh guard
+
+3.4.48 Fix CI test report generation by adding assert-tests-ran.sh guard
+
+3.4.49 CI4-P4: Enable read-and-write permissions on repository level
+
+3.4.50 CI4-P5: reorder release steps, unmask mvn help:evaluate errors
+
+3.4.51 Tests: add check-flaky-jsonl-compat.sh guard for stale exclusions (TESTS-18)
+
+3.4.52 Synchronize pom.xml version with current commit series (CI4-P6)
+
+3.4.53 Synchronize pom.xml version with current commit series (CI4-P6)
+
+3.4.54 CI4-P7: first release uses explicit body (no auto-notes)
+
+3.4.55 CI4-P8: enable auto-generated release notes for >=2nd release
+
+3.4.56 CI4-P8: bump version to test auto-generated release notes
+
+3.4.57 CI4-P8: enable auto-generated release notes for >=2nd release
+
+3.4.58 Tests: add flaky-jsonl exclusion guard (TESTS-18)
+
+3.4.59 Fix malformed pom.xml vector API profiles placement
+
+3.4.60 CI4-P8: enable auto-generated release notes for >=2nd release
+
+3.4.61 CI4-P8: enable auto-generated release notes for >=2nd release
+
+3.4.62 CI5-P1: fix failing fast-profile test (Multiple flaky tests)
+
+3.4.63 CI5-P1: fix YAML syntax error in ci.yml workflow
+
+3.4.64 CI5-P1: fix YAML indentation in restore-keys
+
+3.4.65 CI5-P1: Complete fix for failing fast-profile test and unblock release pipeline
+
+3.4.66 CI5-P2: Add workflow_dispatch to release-on-push.yml for manual releases
+
+3.4.67 Tests: extend assert-tests-ran.sh with storage-aware functionality (TESTS-19)
+
+3.4.68 CI5-P3: Replace workflow-level conclusion check with per-job gate
+
+3.4.69 CI5-P4: fix changelog.yml tag detection
+
+3.4.70 CI5-P5: Fix hybrid-ci.yml summary job bash syntax
+
+3.4.71 CI5-P6: Add release health diagnostic workflow
+
+3.4.72 CI5-P8: Clean up ci.yml fast job and workflow-summary indentation
