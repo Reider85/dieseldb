@@ -21,9 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Only run on successful release creation
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push'
+    if: github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write   # required to commit back to main
     
@@ -41,25 +39,24 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      # Get the release tag from the workflow run
+      # Get the release tag from GitHub releases
       - name: Get release tag
         id: get-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # The tag format is v{version}-build.{run_number}
-          # We need to extract just the version part for changelog entry
-          TAG="${{ github.event.workflow_run.head_ref }}"
-          if [[ "$TAG" == refs/tags/* ]]; then
-            VERSION="${TAG#refs/tags/v}"
-            # Extract base version (remove -build.XXX)
-            BASE_VERSION="${VERSION%-build.*}"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
-            echo "Release tag: $TAG, Version: $VERSION, Base: $BASE_VERSION"
-          else
-            echo "ERROR: Expected tag format but got: $TAG"
-            exit 1
+          set -euo pipefail
+          TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -z "$TAG" ]; then
+            echo "No published release found — nothing to changelog."
+            exit 0
           fi
+          VERSION="${TAG#v}"
+          BASE_VERSION="${VERSION%-build.*}"
+          echo "tag=$TAG"        >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG (base $BASE_VERSION)"
 
       # Generate changelog since last tag
       - name: Generate changelog
