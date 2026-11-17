@@ -202,14 +202,14 @@ jobs:
           echo "| Check Limits | ${{ needs.check-limits.result }} | Auto-detect |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub CI | ${{ needs.github-ci.result }} | ${{ needs.check-limits.outputs.use_local == 'false' && 'GitHub' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Local CI | ${{ needs.local-ci.result }} | ${{ needs.check-limits.outputs.use_local == 'true' && 'Local Fallback' || 'Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          "" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "## CI Mode" >> $GITHUB_STEP_SUMMARY
           echo "- Mode: ${{ needs.check-limits.outputs.use_local == 'true' && 'Local Fallback' || 'GitHub Actions' }}" >> $GITHUB_STEP_SUMMARY
-          "" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Test Results" >> $GITHUB_STEP_SUMMARY
           echo "- Coverage reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY
           echo "- Test reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY
-          "" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Next Steps" >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.check-limits.outputs.use_local }}" = "true" ]; then
             echo "- ⚠️  Running in local fallback mode due to GitHub limits" >> $GITHUB_STEP_SUMMARY
