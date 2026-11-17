@@ -74,6 +74,13 @@ define run-tests-incr
 	$(ASSERT_TESTS) "$$stamp"
 endef
 
+define run-tests-storage
+	@stamp=$$(mktemp); \
+	echo "Running profile '$(1)' (storage.type=$(3))..."; \
+	$(MVN) -B test -P $(1) $(2) -Ddiesel.storage.type=$(3) || exit 1; \
+	$(ASSERT_TESTS) "$$stamp" $(3)
+endef
+
 .PHONY: all build compile test test-one test-incr test-core test-network test-concurrency test-perf large-test test-flaky all-tests all-tests-all-storages all-tests-large timing timing-quick timing-full profile clean clean-cache clean-test-cache help check-timing compare-timing tia tia-run changelog release release-local setup doctor test-storage-csv test-storage-tsv test-storage-jsonl test-storage-avro sync-version
 
 # Default target
@@ -219,16 +226,16 @@ test-flaky:
 
 ## Run format-specific storage tests (only tests matching diesel.storage.type run)
 test-storage-csv:
-	$(call run-tests,storage-csv)
+	$(call run-tests-storage,storage-csv,,csv)
 
 test-storage-tsv:
-	$(call run-tests,storage-tsv)
+	$(call run-tests-storage,storage-tsv,,tsv)
 
 test-storage-jsonl:
-	$(call run-tests,storage-jsonl)
+	$(call run-tests-storage,storage-jsonl,,jsonl)
 
 test-storage-avro:
-	$(call run-tests,storage-avro)
+	$(call run-tests-storage,storage-avro,,avro)
 
 ## Run ALL profiles in one Maven invocation (release gate, TESTS-7).
 ## The 'all' profile (pom.xml) aggregates the fast+core+concurrency+network

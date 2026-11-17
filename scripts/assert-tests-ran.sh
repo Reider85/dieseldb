@@ -5,6 +5,11 @@
 #   stamp=$(mktemp)
 #   mvn -B clean test -P fast || exit 1
 #   ./scripts/assert-tests-ran.sh "$stamp"
+# #
+# # With storage type validation (TESTS-19):
+#   stamp=$(mktemp)
+#   mvn -B clean test -P storage-avro || exit 1
+#   ./scripts/assert-tests-ran.sh "$stamp" avro
 #
 # The stamp MUST be created before Maven starts. Only reports newer than the
 # stamp count, because `test-incr` runs without `clean` and would otherwise be
@@ -13,6 +18,15 @@
 # Why this exists: the default surefire <configuration> in pom.xml excludes every
 # source file, so a run without -P <profile> selects zero tests and still prints
 # BUILD SUCCESS. A commit that did not compile once passed the local gate that way.
+#
+# Storage-aware extension (TESTS-19): when a second argument (storage type) is
+# provided, the script additionally verifies that at least one TEST-*.xml report
+# corresponds to a class with @StorageType("<expected>") — i.e., the storage-type
+# filter actually selected at least one storage-specific class. This catches the
+# failure mode where diesel.storage.type is misspelled (e.g., "avro" vs "AVRO")
+# or set to an unsupported value, in which case surefire still writes reports
+# for storage-agnostic classes (smoke, query, etc.) and the existing "at least
+# one report" check passes silently.
 #
 # Known caveat: under WSL the repo lives on a 9p/DrvFs mount with attribute
 # caching (cache=5). A report created within ~5s of the stamp can be reported as
@@ -55,5 +69,81 @@ if [ "$count" -eq 0 ]; then
     exit 1
 fi
 
-echo "Verified: $count surefire report(s) written."
+# Storage-aware check (TESTS-19): if a storage type is provided, verify that
+# at least one report corresponds to a @StorageType("<storage_type>") class.
+if [ -n "${2:-}" ]; then
+    expected_st="$2"
+    storage_reports=0
+    
+    # Check for xmllint availability, fallback to Python if needed
+    if command -v xmllint >/dev/null 2>&1; then
+        # Use xmllint to extract testclassname from XML reports
+        for report in "$reports_dir"/TEST-*.xml; do
+            [ -f "$report" ] || continue
+            # Extract the testclassname attribute from the <testsuite> root element.
+            classname=$(xmllint --xpath 'string(/testsuite/@name)' "$report" 2>/dev/null)
+            [ -z "$classname" ] && continue
+            # Convert "diesel.AvroStorageTest" -> "diesel/AvroStorageTest.java"
+            src_path=$(echo "$classname" | tr '.' '/')
+            src_file="$repo_root/src/test/java/${src_path}.java"
+            [ -f "$src_file" ] || continue
+            # Check if this source file has @StorageType with the expected value.
+            if grep -qE "@StorageType\s*\(\s*\{?[^}]*\"$expected_st\"" "$src_file"; then
+                storage_reports=$((storage_reports + 1))
+            fi
+        done
+    else
+        # Fallback to Python if xmllint is not available
+        if command -v python3 >/dev/null 2>&1; then
+            for report in "$reports_dir"/TEST-*.xml; do
+                [ -f "$report" ] || continue
+                classname=$(python3 -c "
+import xml.etree.ElementTree as ET
+try:
+    tree = ET.parse('$report')
+    root = tree.getroot()
+    print(root.get('name', ''))
+except:
+    pass
+" 2>/dev/null)
+                [ -z "$classname" ] && continue
+                # Convert "diesel.AvroStorageTest" -> "diesel/AvroStorageTest.java"
+                src_path=$(echo "$classname" | tr '.' '/')
+                src_file="$repo_root/src/test/java/${src_path}.java"
+                [ -f "$src_file" ] || continue
+                # Check if this source file has @StorageType with the expected value.
+                if python3 -c "
+import re
+with open('$src_file', 'r') as f:
+    content = f.read()
+if re.search(r'@StorageType\s*\(\\s*\\{?[^}]*\"$expected_st\"', content):
+    exit(0)
+else:
+    exit(1)
+" 2>/dev/null; then
+                    storage_reports=$((storage_reports + 1))
+                fi
+            done
+        else
+            # If neither xmllint nor Python is available, warn and fall back to legacy behavior
+            echo "WARNING: Neither xmllint nor python3 available for storage-type validation. Using legacy count-only behavior." >&2
+            storage_reports="$count"
+        fi
+    fi
+    
+    if [ "$storage_reports" -eq 0 ]; then
+        echo "" >&2
+        echo "ERROR: 0 storage reports for diesel.storage.type=$expected_st" >&2
+        echo "Surefire wrote reports, but none correspond to a class annotated" >&2
+        echo "with @StorageType(\"$expected_st\"). Check that:" >&2
+        echo "  - the storage type is spelled correctly (lowercase: csv, tsv, jsonl, avro)" >&2
+        echo "  - the @StorageType annotation on the target test class matches" >&2
+        echo "  - the test class has the matching @Tag (e.g., @Tag(\"storage\"))" >&2
+        exit 1
+    fi
+    echo "Verified: $storage_reports storage report(s) for type '$expected_st' (out of $count total)."
+else
+    echo "Verified: $count surefire report(s) written."
+fi
+
 exit 0
