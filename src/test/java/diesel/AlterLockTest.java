@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * (same rationale as CopyAlgorithmTest's wall-clock assert).
  */
 @Tag("smoke")
+@Tag("flaky")
 @Isolated
 @ResourceLock("diesel.alter.copy.config")
 public class AlterLockTest {

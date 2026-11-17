@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * swap window while leaving other indexes and all data intact.
  */
 @Tag("smoke")
+@Tag("flaky")
 @ResourceLock("diesel.alter.copy.config")
 public class FallbackTest {
 

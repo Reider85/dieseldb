@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * survives serialization (format v4).
  */
 @Tag("smoke")
+@Tag("flaky")
 public class TombstoneTest {
 
     private static final String TABLE = "TOMBSTONE_T";

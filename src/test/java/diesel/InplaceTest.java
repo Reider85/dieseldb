@@ -26,6 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * bound starves under 4-way class parallelism (same as CopyAlgorithmTest).
  */
 @Tag("smoke")
+@Tag("flaky")
 @Isolated
 public class InplaceTest {
 
