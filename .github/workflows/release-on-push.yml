@@ -14,6 +14,18 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to release (defaults to latest main)'
+        required: false
+      version_override:
+        description: 'Override version suffix (e.g. manual.1). Empty = auto from pom.xml + run number'
+        required: false
+      dry_run:
+        description: 'Dry run (build + log, no tag push, no release)'
+        type: boolean
+        default: false
 
 # Serialize release jobs (never cancel one in-flight: a cancelled job
 # means a missed release).
@@ -26,18 +38,19 @@ jobs:
     name: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Only a successful, push-triggered CI run of main produces a release.
+    # Allow manual dispatch OR successful CI-triggered releases.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     permissions:
       contents: write   # required to push tags and create releases
     steps:
       - name: Checkout the tested commit
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Set up JDK 21
@@ -55,18 +68,18 @@ jobs:
           BASE=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '\r' | awk 'NF{p=$0} END{print p}')
           case "$BASE" in
             [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "ERROR: cannot parse project.version from pom.xml (got: '$BASE')"; exit 1 ;;
+            *) echo "ERROR: bad project.version '$BASE'"; exit 1 ;;
           esac
-          RUN="${{ github.event.workflow_run.run_number }}"
-          if ! printf '%s' "$RUN" | grep -Eq '^[0-9]+$'; then
-            echo "ERROR: workflow_run.run_number is not numeric (got: '$RUN')"
-            exit 1
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            VERSION="${BASE}-${{ github.event.inputs.version_override }}"
+          else
+            RUN="${{ github.event.workflow_run.run_number || github.run_number }}"
+            printf '%s' "$RUN" | grep -Eq '^[0-9]+$' || { echo "ERROR: run_number not numeric: '$RUN'"; exit 1; }
+            VERSION="${BASE}-build.${RUN}"
           fi
-          VERSION="${BASE}-build.${RUN}"
-          TAG="v${VERSION}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Release version: $TAG (base $BASE, CI run #$RUN)"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: v${VERSION} (base $BASE${{ github.event.inputs.version_override != '' && ', override: ' + github.event.inputs.version_override || ', CI run #' + (github.event.workflow_run.run_number || github.run_number) }})"
 
       - name: Skip if tag already exists (idempotent rerun)
         id: guard
@@ -100,7 +113,7 @@ jobs:
           grep -E 'ERROR|BUILD FAILURE' build.log | head -n 30 || true
 
       - name: Create and push tag
-        if: success() && steps.guard.outputs.exists == 'false'
+        if: success() && steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -122,7 +135,7 @@ jobs:
           echo "Javadoc URL: $JAVADOC_URL"
 
       - name: Create GitHub Release with JAR
-        if: steps.guard.outputs.exists == 'false'
+        if: steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -136,8 +149,8 @@ jobs:
 
             First automated release from CI4 pipeline.
 
-            - Built from commit ${{ github.event.workflow_run.head_sha }}
-            - CI run: ${{ github.event.workflow_run.run_number }}
+            - Built from commit ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
+            - CI run: ${{ github.event.workflow_run.run_number || 'manual' }}
             - Javadoc: ${{ steps.javadoc-link.outputs.javadoc_url }}
 
             ⭐ Star this repo if you find DieselDB useful.
