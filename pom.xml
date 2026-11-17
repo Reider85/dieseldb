@@ -853,28 +853,26 @@
                 </plugins>
             </build>
         </profile>
+        <!-- Auto-activated profiles for vector API compatibility -->
+        <!-- Java 22+: Vector API moved to preview module, enable preview -->
+        <profile>
+            <id>java22-vector-preview</id>
+            <activation>
+                <jdk>[22,25)</jdk>
+            </activation>
+            <properties>
+                <diesel.vector.argline>--add-modules=jdk.incubator.vector --enable-preview</diesel.vector.argline>
+            </properties>
+        </profile>
+        <!-- Java 25+: Vector API graduated, no module flag needed -->
+        <profile>
+            <id>java25-vector-graduated</id>
+            <activation>
+                <jdk>[25,)</jdk>
+            </activation>
+            <properties>
+                <diesel.vector.argline></diesel.vector.argline>
+            </properties>
+        </profile>
     </profiles>
-
-    <!-- Auto-activated profiles for vector API compatibility -->
-    <!-- Java 22+: Vector API moved to preview module, enable preview -->
-    <profile>
-        <id>java22-vector-preview</id>
-        <activation>
-            <jdk>[22,25)</jdk>
-        </activation>
-        <properties>
-            <diesel.vector.argline>--add-modules=jdk.incubator.vector --enable-preview</diesel.vector.argline>
-        </properties>
-    </profile>
-    <!-- Java 25+: Vector API graduated, no module flag needed -->
-    <profile>
-        <id>java25-vector-graduated</id>
-        <activation>
-            <jdk>[25,)</jdk>
-        </activation>
-        <properties>
-            <diesel.vector.argline></diesel.vector.argline>
-        </properties>
-    </profile>
-
 </project>
