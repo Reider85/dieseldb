@@ -187,6 +187,7 @@ large-test:
 ## Continue-on-error: ALL four always run; a red exit at the end = the signal
 ## (a quarantined flake got worse — investigate, do NOT re-run until green).
 test-flaky:
+	@powershell -ExecutionPolicy Bypass -File ./scripts/check-flaky-jsonl-compat.ps1 || { echo "Run 'make clean-test-cache' after fixing pom.xml exclusions."; exit 1; }
 	@rc=0; \
 	stamp=$$(mktemp); \
 	echo "1/4 quarantined WAL group-commit acceptance (profile 'flaky')..."; \

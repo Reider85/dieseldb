@@ -467,7 +467,7 @@ jobs:
             buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
             buildcache-${{ matrix.os }}-
 
-      - name: Detect orphaned test classes
+- name: Detect orphaned test classes
         run: |
           src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
@@ -476,7 +476,10 @@ jobs:
           fi
           echo "No orphaned .class files found."
 
-      # TESTS-5: four invocations, together all 5 quarantined @Tag("flaky") tests,
+      - name: Verify flaky-jsonl exclusions are up to date
+        run: powershell -ExecutionPolicy Bypass -File ./scripts/check-flaky-jsonl-compat.ps1
+
+       # TESTS-5: four invocations, together all 5 quarantined @Tag("flaky") tests,
       # ordered so the load-sensitive assertions run first on a settled runner
       # (NO clean: a full recompile right before the p99 test measured 42ms).
       # Step 1 gets ONE isolated retry (AGENTS.md Known-Flakes protocol); steps
