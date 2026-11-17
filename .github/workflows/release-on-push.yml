@@ -126,19 +126,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: target/*.jar
           fail_on_unmatched_files: true
           draft: false
           prerelease: false
           body: |
-            ## Javadoc Documentation
+            ## DieselDB ${{ steps.version.outputs.tag }}
 
-            API documentation for this release is available at: ${{ steps.javadoc-link.outputs.javadoc_url }}
+            First automated release from CI4 pipeline.
 
-            ---
+            - Built from commit ${{ github.event.workflow_run.head_sha }}
+            - CI run: ${{ github.event.workflow_run.run_number }}
+            - Javadoc: ${{ steps.javadoc-link.outputs.javadoc_url }}
 
-            ⭐ **Star this repo if you find DieselDB useful** — it helps others discover it and supports the open-source community!
+            ⭐ Star this repo if you find DieselDB useful.
 
       - name: Release summary
         if: success()
