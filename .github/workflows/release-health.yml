@@ -1,0 +1,69 @@
+name: Release Health
+on:
+  schedule:
+    - cron: '0 6 * * *'      # daily 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Diagnose release pipeline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## Release Health Report — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo ""
+            echo "| Check | Value |"
+            echo "|---|---|"
+          } > report.md
+
+          LATEST_CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=ci.yml --branch=main --limit=1 --json conclusion,headSha,databaseId --jq '.[0]')
+          CI_CONCL=$(echo "$LATEST_CI" | jq -r '.conclusion // "unknown"')
+          CI_SHA=$(echo "$LATEST_CI"   | jq -r '.headSha // "?"')
+          echo "| Latest CI on main | \`$CI_CONCL\` @ \`$CI_SHA\` |" >> report.md
+
+          LATEST_REL=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=release-on-push.yml --limit=1 --json conclusion,status --jq '.[0]')
+          REL_CONCL=$(echo "$LATEST_REL" | jq -r '.conclusion // "unknown"')
+          echo "| Latest release-on-push | \`$REL_CONCL\` |" >> report.md
+
+          LATEST_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo "none")
+          echo "| Latest published release | \`$LATEST_TAG\` |" >> report.md
+
+          {
+            echo ""
+            if [ "$CI_CONCL" != "success" ]; then
+              echo "### ⚠️ CI is not green on main (\`$CI_CONCL\`)"
+              echo "Releases are blocked because release-on-push requires upstream success."
+              echo "Action: fix the \`fast\` job (CI5-P1)."
+              HEALTHY=1
+            elif [ "$LATEST_TAG" = "none" ]; then
+              echo "### ⚠️ CI green but no release published"
+              echo "Action: inspect release-on-push.yml logs; run CI5-P7 permission check."
+              HEALTHY=1
+            else
+              echo "### ✅ Release pipeline healthy"
+              HEALTHY=0
+            fi
+          } >> report.md
+
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+          # Persist for the issue step
+          echo "healthy=$HEALTHY" >> "$GITHUB_ENV"
+
+      - name: Open issue if unhealthy
+        if: env.healthy == '1'
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Release pipeline unhealthy — $(date -u +%Y-%m-%d)"
+          body-filepath: report.md
+          labels: ci,release-blocker
