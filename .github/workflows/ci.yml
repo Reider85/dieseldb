@@ -465,7 +465,7 @@ jobs:
           restore-keys: |
             buildcache-${{ matrix.os }}-${{ matrix.jdk }}-flaky-
             buildcache-${{ matrix.os }}-${{ matrix.jdk }}-
-buildcache-${{ matrix.os }}- 
+            buildcache-${{ matrix.os }}-
 
       - name: Detect orphaned test classes
         run: |
