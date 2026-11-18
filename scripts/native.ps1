@@ -72,7 +72,9 @@ function Assert-TestsRan {
         [Parameter(Mandatory = $true)]
         [datetime]$StartedAt,
 
-        [string]$Target = "test run"
+        [string]$Target = "test run",
+
+        [string]$StorageType = $null
     )
 
     $reportsDir = Join-Path $script:NativeRepoRoot "target\surefire-reports"
@@ -104,5 +106,71 @@ function Assert-TestsRan {
         exit 1
     }
 
-    Write-Host "Verified: $($fresh.Count) surefire report(s) written by $Target." -ForegroundColor DarkGray
+    # Storage type validation (TESTS-19)
+    if ($StorageType) {
+        $storageReports = @()
+        $hasStorageTypeAnnotation = $false
+        
+        # Check if we have xmllint available (faster)
+        if (Get-Command xmllint -ErrorAction SilentlyContinue) {
+            foreach ($report in $fresh) {
+                try {
+                    $className = $report.BaseName -replace "TEST-", ""
+                    $xmllintResult = xmllint --xpath "string(//testsuite/@classname)" $report.FullName 2>$null
+                    if ($xmllintResult -and $xmllintResult -match ".*$StorageType.*") {
+                        $storageReports += $report
+                        $hasStorageTypeAnnotation = $true
+                    }
+                } catch {
+                    # Fall back to Python if xmllint fails
+                }
+            }
+        }
+        
+        # Fallback to Python if xmllint not available or failed
+        if ($storageReports.Count -eq 0) {
+            foreach ($report in $fresh) {
+                try {
+                    $pythonScript = @"
+import xml.etree.ElementTree as ET
+import sys
+try:
+    tree = ET.parse(sys.argv[1])
+    classname = tree.getroot().get('classname', '')
+    if '$StorageType' in classname:
+        print('found')
+except:
+    pass
+"@
+                    $pythonResult = python -c $pythonScript $report.FullName 2>$null
+                    if ($pythonResult -eq "found") {
+                        $storageReports += $report
+                        $hasStorageTypeAnnotation = $true
+                    }
+                } catch {
+                    # Continue to next report
+                }
+            }
+        }
+        
+        if ($hasStorageTypeAnnotation) {
+            $totalCount = $fresh.Count
+            $storageCount = $storageReports.Count
+            Write-Host "Verified: $($storageCount) storage report(s) for type '$StorageType' (out of $totalCount total)." -ForegroundColor DarkGray
+        } else {
+            Write-Host ""
+            Write-Host "ERROR: no surefire reports found for storage type '$StorageType'." -ForegroundColor Red
+            Write-Host ""
+            Write-Host "Found $($fresh.Count) total reports, but none match the expected storage type."
+            Write-Host "This usually means:"
+            Write-Host "  1. The storage type is misspelled (e.g., 'AVRO' instead of 'avro')"
+            Write-Host "  2. The storage type is not supported"
+            Write-Host "  3. No tests are annotated with @StorageType('$StorageType')"
+            Write-Host ""
+            Write-Host "Check that diesel.storage.type is set correctly and that tests exist for this type."
+            exit 1
+        }
+    } else {
+        Write-Host "Verified: $($fresh.Count) surefire report(s) written by $Target." -ForegroundColor DarkGray
+    }
 }

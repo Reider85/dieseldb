@@ -42,7 +42,12 @@ if [ -z "$stamp" ] || [ ! -f "$stamp" ]; then
     exit 1
 fi
 
-repo_root=$(cd "$(dirname "$0")/.." && pwd)
+# Portable approach for dirname
+case "$0" in
+    */*) script_dir="${0%/*}" ;;
+    *) script_dir="." ;;
+esac
+repo_root=$(cd "$script_dir/.." && pwd)
 reports_dir="$repo_root/target/surefire-reports"
 
 if [ ! -d "$reports_dir" ]; then

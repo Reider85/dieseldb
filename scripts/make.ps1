@@ -70,7 +70,10 @@ function Invoke-ProfileTests {
         # branch aborts the script (TESTS-14: the timing gates drop the retry
         # marker there - Write-Error below is terminating under EAP=Stop, so
         # the hook MUST run first).
-        [scriptblock]$OnFail
+        [scriptblock]$OnFail,
+
+        # Storage type for validation (TESTS-19)
+        [string]$StorageType = $null
     )
 
     $mvnArgs = @("-B")
@@ -113,7 +116,7 @@ function Invoke-ProfileTests {
         }
     }
 
-    Assert-TestsRan -StartedAt $startedAt -Target $label
+    Assert-TestsRan -StartedAt $startedAt -Target $label -StorageType $StorageType
 }
 
 # Shared timing-gate body (TESTS-6): wipe target/surefire-reports first
@@ -330,16 +333,16 @@ switch ($Target) {
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
     "test-storage-csv" {
-        Invoke-ProfileTests -Profile "storage-csv"
+        Invoke-ProfileTests -Profile "storage-csv" -StorageType "csv"
     }
     "test-storage-tsv" {
-        Invoke-ProfileTests -Profile "storage-tsv"
+        Invoke-ProfileTests -Profile "storage-tsv" -StorageType "tsv"
     }
     "test-storage-jsonl" {
-        Invoke-ProfileTests -Profile "storage-jsonl"
+        Invoke-ProfileTests -Profile "storage-jsonl" -StorageType "jsonl"
     }
     "test-storage-avro" {
-        Invoke-ProfileTests -Profile "storage-avro"
+        Invoke-ProfileTests -Profile "storage-avro" -StorageType "avro"
     }
     "changelog" {
         if (-not $Desc) {
