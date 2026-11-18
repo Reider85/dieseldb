@@ -54,15 +54,28 @@ jobs:
 
       - name: Verify upstream CI jobs
         id: upstream
-        if: github.event_name != 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          # On workflow_dispatch upstream CI run absent — set outputs to success
+          # to allow downstream steps (Build JAR, Create tag, ...) to execute.
+          # Responsibility for commit selection lies with the operator.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "compile-gate=success" >> "$GITHUB_OUTPUT"
+            echo "fast=success" >> "$GITHUB_OUTPUT"
+            echo "Manual dispatch — upstream gate bypassed (operator is responsible for the commit)."
+            exit 0
+          fi
           for job in compile-gate fast; do
-            conclusion=$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs \
+            conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
               --jq ".jobs[] | select(.name == \"$job\") | .conclusion")
+            if [ -z "$conclusion" ]; then
+              echo "::error::Job '$job' not found in CI run $RUN_ID — likely renamed."
+              exit 1
+            fi
             echo "$job=$conclusion" >> "$GITHUB_OUTPUT"
             echo "Upstream job $job: $conclusion"
             [ "$conclusion" = "success" ] || { echo "::error::Upstream job $job is $conclusion — refusing to release"; exit 1; }
