@@ -38,10 +38,11 @@ jobs:
     name: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Allow manual dispatch OR CI-triggered releases.
+    # Allow manual dispatch OR successful CI-triggered releases.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.event == 'push' &&
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_branch == 'main')
     permissions:
       contents: write   # required to push tags and create releases
