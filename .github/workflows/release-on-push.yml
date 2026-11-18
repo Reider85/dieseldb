@@ -107,7 +107,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=$(mvn -B help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '\r' | awk 'NF{p=$0} END{print p}')
+          BASE=$(python3 -c '
+          import re, xml.etree.ElementTree as ET
+          root = ET.parse("pom.xml").getroot()
+          ns = ""
+          if root.tag.startswith("{"):
+              ns = root.tag.split("}")[0] + "}"
+          v = root.find(f"{ns}version")
+          if v is None:
+              v = root.find(f"{ns}parent/{ns}version")
+          if v is None or v.text is None:
+              raise SystemExit("ERROR: cannot find <version> in pom.xml")
+          print(v.text.strip())
+          ')
+          # Strip -SNAPSHOT if present
+          BASE="${BASE%-SNAPSHOT}"
           case "$BASE" in
             [0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "ERROR: bad project.version '$BASE'"; exit 1 ;;
