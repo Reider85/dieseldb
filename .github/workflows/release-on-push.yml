@@ -52,6 +52,20 @@ jobs:
           ref: ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
+      - name: Verify token can push tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PERM_JSON=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions')
+          echo "Repository permissions: $PERM_JSON"
+          CAN_PUSH=$(echo "$PERM_JSON" | jq -r '.push')
+          if [ "$CAN_PUSH" != "true" ]; then
+            echo "::error::GITHUB_TOKEN lacks push permission. Enable Settings → Actions → General → Workflow permissions → 'Read and write permissions'."
+            exit 1
+          fi
+          echo "Token can push — tag push will succeed."
+
       - name: Verify upstream CI jobs
         id: upstream
         env:
