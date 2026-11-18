@@ -1,10 +1,11 @@
 name: Auto Update Changelog
 
 # Auto-update Changelog.md when a release is published
-# Triggered by release-on-push.yml workflow
+# Triggered by release-on-push.yml workflow OR manually via workflow_dispatch
 #
 # Design:
-# - Triggered ONLY when release-on-push creates a GitHub Release
+# - Triggered automatically when release-on-push creates a GitHub Release
+# - Can also be triggered manually with specific tag input
 # - Parses commits since last tag using conventional commits format
 # - Adds new section to Changelog.md and commits back to main
 # - Uses [skip ci] to avoid recursive CI loops
@@ -14,14 +15,21 @@ on:
   workflow_run:
     workflows: [Release on Push]
     types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag to generate changelog for (e.g. v3.4.49-build.820). Empty = latest release.'
+        required: false
 
 jobs:
   update-changelog:
     name: update-changelog
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Only run on successful release creation
-    if: github.event.workflow_run.conclusion == 'success'
+    # Run on manual dispatch or successful release creation
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     permissions:
       contents: write   # required to commit back to main
     
@@ -39,20 +47,27 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      # Get the release tag from GitHub releases
+      # Get the release tag from GitHub releases or manual input
       - name: Get release tag
         id: get-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
-          TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')
+          fi
           if [ -z "$TAG" ]; then
             echo "No published release found — nothing to changelog."
             exit 0
           fi
           VERSION="${TAG#v}"
           BASE_VERSION="${VERSION%-build.*}"
+          BASE_VERSION="${BASE_VERSION%-manual.*}"
+          BASE_VERSION="${BASE_VERSION%-*}"
           echo "tag=$TAG"        >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "base_version=$BASE_VERSION" >> "$GITHUB_OUTPUT"
