@@ -36,3 +36,6 @@ timing/*
 
 # Test data directories created at repo root by integration tests
 /test_data_*/
+
+# Maven Versions Plugin backup file (mvn versions:set)
+pom.xml.versionsBackup

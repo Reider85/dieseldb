@@ -271,7 +271,7 @@
                     <doclint>none</doclint>
                     <quiet>true</quiet>
                     <failOnError>false</failOnError>
-                    <additionalparam>--add-modules=jdk.incubator.vector</additionalparam>
+                    <additionalparam>${diesel.vector.argline}</additionalparam>
                 </configuration>
                 <executions>
                     <execution>
@@ -441,7 +441,7 @@
                             <reuseForks>false</reuseForks>
                             <!-- TESTS-15: vector flag KEPT - aggregate-heavy
                                  benchmark methods assert latency floors. -->
-                            <argLine>-Xmx2g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx2g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <!-- TESTS-12: quiet logging - 1M-row benchmarks used
                                      to emit ~140MB of INFO lines per large/perf run.
@@ -475,7 +475,7 @@
                             <excludedGroups>${surefire.excludedGroups}</excludedGroups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
-                            <argLine>-Xmx4g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx4g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.largeTests>${diesel.largeTests}</diesel.largeTests>
                                 <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
@@ -605,7 +605,7 @@
                             <groups>flaky</groups>
                             <forkCount>1</forkCount>
                             <reuseForks>true</reuseForks>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx1g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.largeTests>true</diesel.largeTests>
                                 <diesel.runFlaky>true</diesel.runFlaky>
@@ -626,7 +626,7 @@
              excluded here (they would be flaky-tagged and slow under jsonl) —
              they belong to the 'flaky' profile above. -->
         <profile>
-            <id>flaky-jsonl</id>
+<id>flaky-jsonl</id>
             <properties>
                 <test.heap>1g</test.heap>
             </properties>
@@ -642,7 +642,7 @@
                             <groups>flaky</groups>
                             <forkCount>1</forkCount>
                             <reuseForks>true</reuseForks>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx1g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.largeTests>true</diesel.largeTests>
                                 <diesel.runFlaky>true</diesel.runFlaky>
@@ -686,7 +686,7 @@
                             <groups>timing</groups>
                             <forkCount>1</forkCount>
                             <reuseForks>false</reuseForks>
-                            <argLine>-Xmx4g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx4g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.largeTests>true</diesel.largeTests>
                                 <diesel.runAllTestsSample>true</diesel.runAllTestsSample>
@@ -737,7 +737,7 @@
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx1g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.storage.type>csv</diesel.storage.type>
                             </systemPropertyVariables>
@@ -765,7 +765,7 @@
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx1g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.storage.type>tsv</diesel.storage.type>
                             </systemPropertyVariables>
@@ -793,7 +793,7 @@
                             <reuseForks>true</reuseForks>
                             <parallel>classes</parallel>
                             <threadCountClasses>2</threadCountClasses>
-                            <argLine>-Xmx1g --add-modules=jdk.incubator.vector</argLine>
+                            <argLine>-Xmx1g ${diesel.vector.argline}</argLine>
                             <systemPropertyVariables>
                                 <diesel.storage.type>jsonl</diesel.storage.type>
                             </systemPropertyVariables>
