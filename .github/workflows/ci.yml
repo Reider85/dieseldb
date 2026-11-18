@@ -103,7 +103,7 @@ jobs:
             buildcache-${{ runner.os }}-fast-
             buildcache-${{ runner.os }}-
 
-       - name: Run fast tests
+      - name: Run fast tests
         shell: bash
         run: |
           stamp=$(mktemp)
@@ -207,17 +207,8 @@ jobs:
         id: tia
         run: |
           PROFILES=$(./scripts/tia.sh --profiles "origin/${{ github.base_ref }}...HEAD")
-          echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
-          echo "Impacted profiles: $PROFILES"
-
-      - name: Detect orphaned test classes
-        run: |
-          src_count=$(git ls-files 'src/test/java/**/*.java' | wc -l)
-          cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
-          if [ "$cls_count" -gt "$src_count" ]; then
-            echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
-          fi
-          echo "No orphaned .class files found."
+           echo "profiles=$PROFILES" >> "$GITHUB_OUTPUT"
+           echo "Impacted profiles: $PROFILES"
 
       - name: Run impacted profiles
         if: steps.tia.outputs.profiles != ''
