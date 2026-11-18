@@ -1090,3 +1090,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.46 Synchronize pom.xml version with current commit series (CI4-P6)
 
 3.4.47 Synchronize pom.xml version with current commit series (CI4-P6)
+
+3.4.48 Tests: complete TESTS-20/21/22 cleanup tasks (TESTS3.md)
