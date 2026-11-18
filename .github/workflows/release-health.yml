@@ -38,6 +38,7 @@ jobs:
           LATEST_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo "none")
           echo "| Latest published release | \`$LATEST_TAG\` |" >> report.md
 
+          HEALTHY=1   # default to unhealthy; only set to 0 when explicitly healthy
           {
             echo ""
             if [ "$CI_CONCL" != "success" ]; then
