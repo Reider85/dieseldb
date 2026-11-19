@@ -30,6 +30,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @org.junit.jupiter.api.Tag("storage")
 @org.junit.jupiter.api.Tag("smoke")
+@org.junit.jupiter.api.Tag("flaky")
 @Isolated  // wall-clock timing assertions starve under parallel-class CPU contention
 class WALBackpressureTest {
 

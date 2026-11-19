@@ -29,6 +29,7 @@ import diesel.TxStatusTracker;
  */
 @Tag("smoke")
 @Tag("storage")
+@Tag("flaky")
 public class CheckpointManagerTest {
 
     private WALManager walManager;

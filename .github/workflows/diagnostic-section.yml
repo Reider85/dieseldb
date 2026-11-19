@@ -1,0 +1,9 @@
+      - name: Print test failure diagnosis (last 80 lines)
+        if: failure()
+        run: |
+          echo "==== last 80 lines of Maven log ===="
+          tail -n 80 test.log || true
+          echo "==== surefire summary ===="
+          grep -E "FAILURE|ERROR|Tests run:" test.log | tail -n 50 || true
+          echo "==== tests that started but never finished ===="
+          grep -E "^Running " test.log | tail -n 20 || true
