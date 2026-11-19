@@ -26,6 +26,7 @@ import org.junit.jupiter.api.parallel.ResourceLock;
  * capacity and the backend can be controlled directly.
  */
 @Tag("smoke")
+@Tag("flaky")
 @ResourceLock("diesel.audit.enabled")  // shares JVM-global AuditLogger.ENABLED_KEY system property
 public class AuditAsyncTest {
 

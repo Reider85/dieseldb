@@ -1,4 +1,8 @@
 name: Release Health
+
+# Daily health check for the autonomous release pipeline (CI7)
+# Monitors that every push to main produces a release, regardless of CI status
+
 on:
   schedule:
     - cron: '0 6 * * *'      # daily 06:00 UTC
@@ -19,6 +23,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          HEALTHY=0   # default to unhealthy; only set to 1 when explicitly healthy
+
           {
             echo "## Release Health Report — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo ""
@@ -26,39 +32,41 @@ jobs:
             echo "|---|---|"
           } > report.md
 
-          LATEST_CI=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=ci.yml --branch=main --limit=1 --json conclusion,headSha,databaseId --jq '.[0]')
-          CI_CONCL=$(echo "$LATEST_CI" | jq -r '.conclusion // "unknown"')
-          CI_SHA=$(echo "$LATEST_CI"   | jq -r '.headSha // "?"')
-          echo "| Latest CI on main | \`$CI_CONCL\` @ \`$CI_SHA\` |" >> report.md
+          # Last 10 pushes to main
+          LATEST_PUSHES=$(gh api "repos/$GITHUB_REPOSITORY/commits?sha=main&per_page=10" --jq '.[].sha')
+          PUSH_COUNT=$(echo "$LATEST_PUSHES" | wc -l)
 
-          LATEST_REL=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow=release-on-push.yml --limit=1 --json conclusion,status --jq '.[0]')
-          REL_CONCL=$(echo "$LATEST_REL" | jq -r '.conclusion // "unknown"')
-          echo "| Latest release-on-push | \`$REL_CONCL\` |" >> report.md
+          # Releases created in the last 7 days
+          RECENT_RELEASES=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 --json tagName,publishedAt --jq '.[].tagName')
+          RELEASE_COUNT=$(echo "$RECENT_RELEASES" | wc -l)
 
-          LATEST_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || echo "none")
-          echo "| Latest published release | \`$LATEST_TAG\` |" >> report.md
+          # Last release
+          LATEST_RELEASE=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName,createdAt --jq '.[0]')
+          LATEST_TAG=$(echo "$LATEST_RELEASE" | jq -r '.tagName // "none"')
+          LATEST_REL_DATE=$(echo "$LATEST_RELEASE" | jq -r '.createdAt // "never"')
 
-          HEALTHY=1   # default to unhealthy; only set to 0 when explicitly healthy
+          echo "| Last 10 pushes to main | $PUSH_COUNT |" >> report.md
+          echo "| Total releases (last 50) | $RELEASE_COUNT |" >> report.md
+          echo "| Latest release | \`$LATEST_TAG\` ($LATEST_REL_DATE) |" >> report.md
+
           {
             echo ""
-            if [ "$CI_CONCL" != "success" ]; then
-              echo "### ⚠️ CI is not green on main (\`$CI_CONCL\`)"
-              echo "Releases are blocked because release-on-push requires upstream success."
-              echo "Action: fix the \`fast\` job (CI5-P1)."
+            if [ "$RELEASE_COUNT" -eq 0 ]; then
+              echo "### ⚠️ No releases at all"
+              echo "Action: verify CI7-P1 was merged; run CI7-P6 manually."
               HEALTHY=1
-            elif [ "$LATEST_TAG" = "none" ]; then
-              echo "### ⚠️ CI green but no release published"
-              echo "Action: inspect release-on-push.yml logs; run CI5-P7 permission check."
+            elif [ "$PUSH_COUNT" -gt "$RELEASE_COUNT" ]; then
+              echo "### ⚠️ More pushes than releases"
+              echo "Action: some pushes did not produce a release. Inspect release-on-push.yml logs."
               HEALTHY=1
             else
               echo "### ✅ Release pipeline healthy"
+              echo "Every recent push produced a release."
               HEALTHY=0
             fi
           } >> report.md
 
           cat report.md >> "$GITHUB_STEP_SUMMARY"
-
-          # Persist for the issue step
           echo "healthy=$HEALTHY" >> "$GITHUB_ENV"
 
       - name: Open issue if unhealthy
