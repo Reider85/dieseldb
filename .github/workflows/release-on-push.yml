@@ -1,56 +1,50 @@
 name: Release on Push
 
-# Auto-release after every SUCCESSFUL CI run on main (GITHUB.md prompt 2).
+# Auto-release EVERY push to main.
 #
-# Triggered via workflow_run on CI, NOT via push: a release is created
-# only after compile-gate + fast are green for that commit.
-# Doc-only pushes never reach here: ci.yml skips **/*.md / docs/** / LICENSE
-# / NOTICE -> no CI run -> no workflow_run event -> no release.
-# pom.xml is NOT modified and nothing is pushed back to main, so this
-# workflow cannot trigger CI recursively and needs no [skip ci] tag.
-# Tag: v{pom-version}-build.{ci-run-number}, e.g. v3.4.18-build.762.
+# Design (CI7):
+#   - Triggered directly by push to main, NOT by workflow_run.
+#   - Does NOT depend on ci.yml conclusion. CI can be red; this still runs.
+#   - Builds JAR with -Dmaven.test.skip=true (compile main only, skip tests).
+#     If main code does not compile -> step fails -> no tag, no release.
+#   - Tag format: v{pom.version}-{sha7}-build.{run_number}
+#     e.g. v3.4.73-4159c26-build.840
+#   - Idempotent: if tag already exists, skip.
+#   - Verifies every artifact after creation (tag pushed, release created, JAR attached).
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       commit_sha:
         description: 'Commit SHA to release (defaults to latest main)'
         required: false
       version_override:
-        description: 'Override version suffix (e.g. manual.1). Empty = auto from pom.xml + run number'
+        description: 'Override version suffix (e.g. manual.1). Empty = auto.'
         required: false
       dry_run:
         description: 'Dry run (build + log, no tag push, no release)'
         type: boolean
         default: false
 
-# Serialize release jobs (never cancel one in-flight: a cancelled job
-# means a missed release).
 concurrency:
   group: release-on-push
-  cancel-in-progress: false
+  cancel-in-progress: false    # never cancel an in-flight release
+
+permissions:
+  contents: write   # required to push tags and create releases
 
 jobs:
   release:
     name: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # Allow manual dispatch OR successful CI-triggered releases.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main')
-    permissions:
-      contents: write   # required to push tags and create releases
     steps:
-      - name: Checkout the tested commit
+      - name: Checkout
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.inputs.commit_sha || github.ref }}
           fetch-depth: 0
 
       - name: Verify token can push tags
@@ -62,39 +56,9 @@ jobs:
           echo "Repository permissions: $PERM_JSON"
           CAN_PUSH=$(echo "$PERM_JSON" | jq -r '.push')
           if [ "$CAN_PUSH" != "true" ]; then
-            echo "::error::GITHUB_TOKEN lacks push permission. Enable Settings → Actions → General → Workflow permissions → 'Read and write permissions'."
+            echo "::error::GITHUB_TOKEN lacks push permission. Settings → Actions → General → Workflow permissions → 'Read and write permissions'."
             exit 1
           fi
-          echo "Token can push — tag push will succeed."
-
-      - name: Verify upstream CI jobs
-        id: upstream
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          # On workflow_dispatch upstream CI run absent — set outputs to success
-          # to allow downstream steps (Build JAR, Create tag, ...) to execute.
-          # Responsibility for commit selection lies with the operator.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "compile-gate=success" >> "$GITHUB_OUTPUT"
-            echo "fast=success" >> "$GITHUB_OUTPUT"
-            echo "Manual dispatch — upstream gate bypassed (operator is responsible for the commit)."
-            exit 0
-          fi
-          for job in compile-gate fast; do
-            conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" \
-              --jq ".jobs[] | select(.name == \"$job\") | .conclusion")
-            if [ -z "$conclusion" ]; then
-              echo "::error::Job '$job' not found in CI run $RUN_ID — likely renamed."
-              exit 1
-            fi
-            echo "$job=$conclusion" >> "$GITHUB_OUTPUT"
-            echo "Upstream job $job: $conclusion"
-            [ "$conclusion" = "success" ] || { echo "::error::Upstream job $job is $conclusion — refusing to release"; exit 1; }
-          done
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -109,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           BASE=$(python3 -c '
-          import re, xml.etree.ElementTree as ET
+          import xml.etree.ElementTree as ET
           root = ET.parse("pom.xml").getroot()
           ns = ""
           if root.tag.startswith("{"):
@@ -121,22 +85,23 @@ jobs:
               raise SystemExit("ERROR: cannot find <version> in pom.xml")
           print(v.text.strip())
           ')
-          # Strip -SNAPSHOT if present
           BASE="${BASE%-SNAPSHOT}"
           case "$BASE" in
             [0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "ERROR: bad project.version '$BASE'"; exit 1 ;;
           esac
+          SHA7=$(git rev-parse --short=7 HEAD)
           if [ -n "${{ github.event.inputs.version_override }}" ]; then
-            VERSION="${BASE}-${{ github.event.inputs.version_override }}"
+            VERSION="${BASE}-${SHA7}-${{ github.event.inputs.version_override }}"
           else
-            RUN="${{ github.event.workflow_run.run_number || github.run_number }}"
+            RUN="${{ github.run_number }}"
             printf '%s' "$RUN" | grep -Eq '^[0-9]+$' || { echo "ERROR: run_number not numeric: '$RUN'"; exit 1; }
-            VERSION="${BASE}-build.${RUN}"
+            VERSION="${BASE}-${SHA7}-build.${RUN}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Release version: v${VERSION} (base $BASE${{ github.event.inputs.version_override != '' && ', override: ' + github.event.inputs.version_override || ', CI run #' + (github.event.workflow_run.run_number || github.run_number) }})"
+          echo "sha7=$SHA7" >> "$GITHUB_OUTPUT"
+          echo "Release version: v${VERSION} (base $BASE, sha7 $SHA7)"
 
       - name: Skip if tag already exists (idempotent rerun)
         id: guard
@@ -150,8 +115,13 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build JAR
-        if: steps.guard.outputs.exists == 'false' && steps.upstream.outputs.compile-gate == 'success' && steps.upstream.outputs.fast == 'success'
+      - name: Compile main code (gate)
+        if: steps.guard.outputs.exists == 'false'
+        shell: bash
+        run: mvn -B -T 4 --no-transfer-progress -Dstyle.color=never compile -P all -DskipTests 2>&1 | tee compile.log
+
+      - name: Build JAR (skip tests entirely)
+        if: steps.guard.outputs.exists == 'false'
         shell: bash
         run: mvn -B package -Dmaven.test.skip=true -T 4 --no-transfer-progress 2>&1 | tee build.log
 
@@ -159,40 +129,41 @@ jobs:
         if: steps.guard.outputs.exists == 'false'
         run: |
           ls -la target/*.jar
-          test -n "$(ls target/*.jar 2>/dev/null)" || { echo "No JAR produced"; exit 1; }
+          test -n "$(ls target/*.jar 2>/dev/null)" || { echo "::error::No JAR produced"; exit 1; }
 
-      - name: Print build failure diagnosis (last 50 lines)
-        if: failure()
+      - name: Print build failure diagnosis
+        if: failure() && steps.guard.outputs.exists == 'false'
         run: |
-          echo "==== last 50 lines of Maven log ===="
-          tail -n 50 build.log || true
+          echo "==== last 80 lines of build log ===="
+          tail -n 80 build.log || true
           echo "==== errors ===="
-          grep -E 'ERROR|BUILD FAILURE' build.log | head -n 30 || true
+          grep -E 'ERROR|BUILD FAILURE|COMPILATION ERROR' build.log | head -n 30 || true
 
       - name: Create and push tag
-        if: success() && steps.guard.outputs.exists == 'false' && steps.upstream.outputs.compile-gate == 'success' && steps.upstream.outputs.fast == 'success' && github.event.inputs.dry_run != 'true'
+        if: success() && steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git tag -a "$TAG" -m "Release $TAG"
+          git tag -a "$TAG" -m "Release $TAG (commit $(git rev-parse --short HEAD))"
           git push origin "$TAG"
 
-      - name: Generate javadoc link
-        id: javadoc-link
-        if: steps.guard.outputs.exists == 'false' && steps.upstream.outputs.compile-gate == 'success' && steps.upstream.outputs.fast == 'success'
+      - name: Verify tag was pushed
+        if: success() && steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          # Strip leading "v" from the tag to get the version directory on Pages.
-          VERSION="${{ steps.version.outputs.tag }}"
-          VERSION="${VERSION#v}"
-          JAVADOC_URL="https://reider85.github.io/dieseldb/${VERSION}/"
-          echo "javadoc_url=$JAVADOC_URL" >> "$GITHUB_OUTPUT"
-          echo "Javadoc URL: $JAVADOC_URL"
+          set -euo pipefail
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG was not pushed (race condition or permissions revoked)."
+            exit 1
+          fi
+          echo "✅ Tag $TAG verified on remote."
 
       - name: Create GitHub Release with JAR
-        if: steps.guard.outputs.exists == 'false' && steps.upstream.outputs.compile-gate == 'success' && steps.upstream.outputs.fast == 'success' && github.event.inputs.dry_run != 'true'
+        if: success() && steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
@@ -204,18 +175,38 @@ jobs:
           body: |
             ## DieselDB ${{ steps.version.outputs.tag }}
 
-            First automated release from CI4 pipeline.
-
-            - Built from commit ${{ github.event.inputs.commit_sha || github.event.workflow_run.head_sha }}
-            - CI run: ${{ github.event.workflow_run.run_number || 'manual' }}
-            - Javadoc: ${{ steps.javadoc-link.outputs.javadoc_url }}
+            - Built from commit `${{ steps.version.outputs.sha7 }}`
+            - CI run: ${{ github.run_number }}
+            - JAR: `target/*.jar`
 
             ⭐ Star this repo if you find DieselDB useful.
 
-      - name: Release summary
-        if: success()
+      - name: Verify release was created
+        if: success() && steps.guard.outputs.exists == 'false' && github.event.inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
-          echo "## Release published" >> $GITHUB_STEP_SUMMARY
-          echo "- Tag: ${{ steps.version.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "- JAR: $(ls target/*.jar)" >> $GITHUB_STEP_SUMMARY
-          echo "- Javadoc: ${{ steps.javadoc-link.outputs.javadoc_url }}" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+          ASSETS=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null || echo "")
+          if [ -z "$ASSETS" ]; then
+            echo "::error::Release $TAG was not created or has no assets."
+            exit 1
+          fi
+          echo "✅ Release $TAG created with assets:"
+          echo "$ASSETS"
+
+      - name: Release summary
+        if: always()
+        run: |
+          {
+            echo "## Release Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Tag | \`${{ steps.version.outputs.tag || 'n/a' }}\` |"
+            echo "| Already existed | \`${{ steps.guard.outputs.exists || 'n/a' }}\` |"
+            echo "| Dry run | \`${{ github.event.inputs.dry_run || 'false' }}\` |"
+            echo "| Commit | \`$(git rev-parse --short HEAD)\` |"
+            echo "| CI run | \`${{ github.run_number }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
