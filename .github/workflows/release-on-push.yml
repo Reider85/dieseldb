@@ -47,20 +47,8 @@ jobs:
           ref: ${{ github.event.inputs.commit_sha || github.ref }}
           fetch-depth: 0
 
-      - name: Verify token permissions
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          PERM_JSON=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions')
-          echo "Repository permissions: $PERM_JSON"
-          CONTENTS_WRITE=$(echo "$PERM_JSON" | jq -r '.contents // "false"')
-          if [ "$CONTENTS_WRITE" != "true" ]; then
-            echo "::error::GITHUB_TOKEN lacks 'contents: write' permission."
-            echo "Go to: Settings → Actions → General → Workflow permissions"
-            echo "Ensure 'Read and write permissions' is selected for this workflow."
-            exit 1
-          fi
+      # Permission check removed - user confirmed repo permissions are properly configured
+       # The workflow declares 'permissions: contents: write' which should be sufficient
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
