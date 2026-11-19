@@ -458,7 +458,16 @@ public final class PageManager implements PageFlusher, PageLoader, AutoCloseable
      * @return the current I/O mode string
      */
     public String getIoMode() {
-        return FileChannelIO.MODE_DEFAULT; // Could expose via FileChannelIO if needed
+        return io.getIoMode();
+    }
+    
+    /**
+     * Returns the FileChannelIO for testing.
+     *
+     * @return the FileChannelIO instance
+     */
+    public FileChannelIO getFileChannelIO() {
+        return io;
     }
     
     /**

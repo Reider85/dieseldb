@@ -13,7 +13,7 @@ import java.nio.file.StandardOpenOption;
  * Supports three I/O modes:
  * - <b>positional</b>: Heap ByteBuffer + FileChannel.read/write (default, safest)
  * - <b>mapped</b>: FileChannel.map(READ_ONLY, offset, pageSize) for zero-copy read
- * - <b>odirect</b>: Reserved for future Linux O_DIRECT (JNI not implemented, WARN+fallback)
+ * - <b>odirect</b>: O_DIRECT I/O using native library for optimal performance
  * <p>
  * All writes are followed by channel.force(true) for durability.
  */
@@ -29,6 +29,8 @@ final class FileChannelIO implements AutoCloseable {
     private final int pageSize;
     private final String mode;
     private final boolean useMapped;
+    private final boolean useO_DIRECT;
+    private final O_DIRECT_IO o_directIO;
 
     /**
      * Opens or creates a page file for random access.
@@ -48,27 +50,45 @@ final class FileChannelIO implements AutoCloseable {
         String resolvedMode = rawMode.toLowerCase();
         boolean resolvedMapped = MODE_MAPPED.equals(resolvedMode);
 
-        // O_DIRECT is reserved for future JNI implementation (not supported yet)
-        if (MODE_ODIRECT.equals(resolvedMode)) {
-            System.err.println("WARN: O_DIRECT mode for page I/O is not implemented (no JNI support); falling back to positional mode");
-            resolvedMode = MODE_POSITIONAL;
-            resolvedMapped = false;
-        }
-
         this.mode = resolvedMode;
         this.useMapped = resolvedMapped;
+        boolean useO_DIRECT_temp = MODE_ODIRECT.equals(resolvedMode);
+        O_DIRECT_IO o_directIO_temp = null;
+        FileChannel channel_temp = null;
 
-        // Open channel with read/write, create if missing, truncate if empty
-        this.channel = FileChannel.open(
-            file,
-            StandardOpenOption.READ,
-            StandardOpenOption.WRITE,
-            StandardOpenOption.CREATE);
+        if (useO_DIRECT_temp) {
+            // Initialize O_DIRECT I/O
+            try {
+                o_directIO_temp = new O_DIRECT_IO(file, pageSize);
+                channel_temp = null; // Not used in O_DIRECT mode
+            } catch (IOException e) {
+                System.err.println("WARN: O_DIRECT mode failed, falling back to positional mode: " + e.getMessage());
+                useO_DIRECT_temp = false;
+                o_directIO_temp = null;
+                channel_temp = FileChannel.open(
+                    file,
+                    StandardOpenOption.READ,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.CREATE);
+            }
+        } else {
+            o_directIO_temp = null;
+            // Open channel with read/write, create if missing, truncate if empty
+            channel_temp = FileChannel.open(
+                file,
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE,
+                StandardOpenOption.CREATE);
+        }
+        
+        this.useO_DIRECT = useO_DIRECT_temp;
+        this.o_directIO = o_directIO_temp;
+        this.channel = channel_temp;
     }
 
     /**
      * Reads a page at the given PageId's offset.
-     * Uses FileChannel.read(ByteBuffer, offset) by default,
+     * Uses O_DIRECT I/O when enabled, otherwise uses FileChannel.read(ByteBuffer, offset) by default,
      * or FileChannel.map for zero-copy in mapped mode.
      *
      * @param pageId identifies the page (fileOffset = pageNum * pageSize)
@@ -76,6 +96,10 @@ final class FileChannelIO implements AutoCloseable {
      * @throws IOException on read failure or short read
      */
     ByteBuffer readPage(PageId pageId) throws IOException {
+        if (useO_DIRECT) {
+            return o_directIO.readPage(pageId);
+        }
+        
         long offset = pageId.fileOffset(pageSize);
         ByteBuffer buffer;
 
@@ -100,7 +124,7 @@ final class FileChannelIO implements AutoCloseable {
 
     /**
      * Writes a page buffer at the given PageId's offset.
-     * Always uses positional write followed by force.
+     * Uses O_DIRECT I/O when enabled, otherwise uses positional write followed by force.
      *
      * @param pageId identifies the page (fileOffset = pageNum * pageSize)
      * @param buffer page data (position=0, limit=pageSize)
@@ -109,6 +133,12 @@ final class FileChannelIO implements AutoCloseable {
     void writePage(PageId pageId, ByteBuffer buffer) throws IOException {
         if (buffer.remaining() != pageSize) {
             throw new IllegalArgumentException("buffer size must match page size: expected " + pageSize + ", got " + buffer.remaining());
+        }
+
+        if (useO_DIRECT) {
+            o_directIO.writePage(pageId, buffer);
+            o_directIO.force(); // ensure durability
+            return;
         }
 
         long offset = pageId.fileOffset(pageSize);
@@ -124,6 +154,11 @@ final class FileChannelIO implements AutoCloseable {
      * @throws IOException on file extension failure
      */
     void extendTo(long offsetPlusSize) throws IOException {
+        if (useO_DIRECT) {
+            o_directIO.extendTo(offsetPlusSize);
+            return;
+        }
+
         long currentSize = channel.size();
         if (offsetPlusSize <= currentSize) {
             return; // no extension needed
@@ -145,6 +180,9 @@ final class FileChannelIO implements AutoCloseable {
      * @throws IOException if size cannot be determined
      */
     long size() throws IOException {
+        if (useO_DIRECT) {
+            return o_directIO.size();
+        }
         return channel.size();
     }
 
@@ -154,20 +192,54 @@ final class FileChannelIO implements AutoCloseable {
      * @throws IOException on force failure
      */
     void force() throws IOException {
+        if (useO_DIRECT) {
+            o_directIO.force();
+            return;
+        }
         channel.force(true);
     }
 
     /**
-     * Closes the underlying FileChannel.
+     * Closes the underlying FileChannel or O_DIRECT I/O.
      * Idempotent and safe to call multiple times.
      */
     @Override
     public void close() throws IOException {
-        if (channel != null && channel.isOpen()) {
-            channel.close();
+        if (useO_DIRECT) {
+            if (o_directIO != null) {
+                o_directIO.close();
+            }
+        } else {
+            if (channel != null && channel.isOpen()) {
+                channel.close();
+            }
         }
     }
 
+    /**
+     * Returns the current I/O mode for testing.
+     *
+     * @return the current I/O mode string
+     */
+    public String getIoMode() {
+        if (useO_DIRECT) {
+            return MODE_ODIRECT;
+        } else if (useMapped) {
+            return MODE_MAPPED;
+        } else {
+            return MODE_POSITIONAL;
+        }
+    }
+    
+    /**
+     * Checks if O_DIRECT mode is enabled.
+     *
+     * @return true if O_DIRECT mode is enabled, false otherwise
+     */
+    public boolean isUsingO_DIRECT() {
+        return useO_DIRECT;
+    }
+    
     // --- Private helpers ---
 
     /**
