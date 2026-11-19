@@ -175,7 +175,9 @@
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
+</plugin>
+            
+            
             
             <!-- JaCoCo code coverage plugin -->
             <plugin>

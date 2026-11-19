@@ -329,6 +329,15 @@ public final class Page {
         header.invalidateLiveCount(); // new bytes may contain a different live count (o2 Buffer-8)
         setDirty(true);
     }
+    
+    /**
+     * Returns a ByteBuffer view of the page data.
+     * 
+     * @return a ByteBuffer containing the page data
+     */
+    public ByteBuffer getBuffer() {
+        return ByteBuffer.wrap(data);
+    }
 
     /**
      * Copies the full content (data array + header fields) from another page
