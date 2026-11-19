@@ -1,24 +1,23 @@
 name: Auto Update Changelog
 
-# Auto-update Changelog.md when a release is published
-# Triggered by release-on-push.yml workflow OR manually via workflow_dispatch
+# Auto-update Changelog.md when a GitHub Release is published
+# Triggered by GitHub Release events OR manually via workflow_dispatch
 #
-# Design:
-# - Triggered automatically when release-on-push creates a GitHub Release
+# Design (CI7):
+# - Triggered automatically when ANY release is published (from our new release workflow)
 # - Can also be triggered manually with specific tag input
 # - Parses commits since last tag using conventional commits format
 # - Adds new section to Changelog.md and commits back to main
 # - Uses [skip ci] to avoid recursive CI loops
-# - Handles version format: v3.4.4-build.762
+# - Handles version format: v3.4.73-abc1234-build.840
 
 on:
-  workflow_run:
-    workflows: [Release on Push]
-    types: [completed]
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag to generate changelog for (e.g. v3.4.49-build.820). Empty = latest release.'
+        description: 'Tag to generate changelog for (e.g. v3.4.73-abc1234-build.840). Empty = latest release.'
         required: false
 
 jobs:
@@ -26,10 +25,9 @@ jobs:
     name: update-changelog
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Run on manual dispatch or successful release creation
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event.action == 'published'
     permissions:
       contents: write   # required to commit back to main
     
@@ -53,10 +51,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
           if [ -n "$INPUT_TAG" ]; then
             TAG="$INPUT_TAG"
+          elif [ -n "$RELEASE_TAG" ]; then
+            TAG="$RELEASE_TAG"
           else
             TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')
           fi
@@ -131,7 +132,7 @@ jobs:
             BASE_VERSION="${{ steps.get-tag.outputs.base_version }}"
             DATE=$(date '+%Y-%m-%d')
             
-            # Format: ## [v3.4.4-build.762] — 2026-11-09
+            # Format: ## [v3.4.73-abc1234-build.840] — 2026-11-19
             echo "## [${{ steps.get-tag.outputs.version }}] — ${DATE}" > new-changelog-section.txt
             echo "" >> new-changelog-section.txt
             echo "$ENTRY" >> new-changelog-section.txt
