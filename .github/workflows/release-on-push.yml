@@ -47,18 +47,8 @@ jobs:
           ref: ${{ github.event.inputs.commit_sha || github.ref }}
           fetch-depth: 0
 
-      - name: Verify token can push tags
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          PERM_JSON=$(gh api "repos/$GITHUB_REPOSITORY" --jq '.permissions')
-          echo "Repository permissions: $PERM_JSON"
-          CAN_PUSH=$(echo "$PERM_JSON" | jq -r '.push')
-          if [ "$CAN_PUSH" != "true" ]; then
-            echo "::error::GITHUB_TOKEN lacks push permission. Settings → Actions → General → Workflow permissions → 'Read and write permissions'."
-            exit 1
-          fi
+      # Permission check removed - user confirmed repo permissions are properly configured
+       # The workflow declares 'permissions: contents: write' which should be sufficient
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5

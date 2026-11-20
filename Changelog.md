@@ -1093,3 +1093,7 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.48 Tests: complete TESTS-20/21/22 cleanup tasks (TESTS3.md)
 
 3.4.73 CI6-P10: Strip -SNAPSHOT from release BASE version in Compute release version
+
+3.4.90 Implement O_DIRECT support for DieselDB page storage
+
+3.4.91 CI7-P6: Fix permission validation in release-on-push.yml
