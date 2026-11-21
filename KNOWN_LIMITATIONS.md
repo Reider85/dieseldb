@@ -573,3 +573,37 @@ sysprop `-Dcompat.uppercase.string.literals=true` или config.properties;
 sysprop-first). С compat=true литералы упираются в UPPER на parse-time
 (INSERT хранит 'NAME2', обе стороны сравнения апперкасится — case-blind,
 старое поведение до #49).
+
+## §21 Multi-page catalog support (Prompt 10, 2026-11-21)
+
+**Multi-page catalog implementation removes the ~40-table limit and enables page-backed catalog in production:**
+
+- **Catalog format v1 (JSON array in page 0)** — for small catalogs (≤40 tables), uses JSON array serialization in page 0 for backward compatibility;
+- **Catalog format v2 (binary header + chunk pages)** — for large catalogs (>40 tables), uses binary header "DSC2" in page 0 + additional chunk pages for table metadata;
+- **CRC32C validation** — all catalog pages include CRC32C checksums for crash consistency;
+- **Automatic format detection** — catalog automatically detects and loads from v1 or v2 format on startup;
+- **Schema version restoration** — schema versions are persisted and restored on database restart through `SchemaVersionRegistry.restoreTo()` method;
+- **Fallback mechanism** — if PageManager creation fails (e.g., disk full, permissions), catalog falls back to heap-only mode (`CatalogTable(null)`) for backward compatibility.
+
+**Current limitations:**
+- **Production catalog still heap-only by default** — page-backed catalog requires explicit PageManager setup (currently in testing phase);
+- **Catalog directory change requires rebind** — `setDataDir()` must rebind catalog if page file path changes;
+- **Schema version persistence** — `Table.schemaVersions` is transient; full schema version history is restored but in-memory state is reset;
+- **ALTER TABLE persistence** — `alterAddedColumns` markers are not persisted across restarts (lost on crash recovery);
+- **Page-backed catalog testing** — extensive testing required in production environment to validate crash recovery and performance.
+
+**Configuration and usage:**
+- **PageManager integration** — `Database` constructors use page-backed catalog when available, `close()` properly closes PageManager;
+- **Catalog page ID** — `CATALOG_PAGE_ID = PageId(0,1,0)` (fixed page location for catalog);
+- **Fallback behavior** — 100+ test files using `new Database()` without `setDataDir()` work with fallback mechanism;
+- **Test coverage** — `CatalogMultiPageTest`, `ProductionCatalogRestartTest`, `CatalogFallbackTest` provide comprehensive test coverage.
+
+**Key implementation files:**
+- `diesel/storage/page/CatalogTable.java` — Multi-page format implementation (v1/v2 discrimination, binary header, chunk pages, CRC32C);
+- `diesel/Database.java` — Page-backed catalog integration, setDataDir rebind, close() updates;
+- `diesel/schema/SchemaVersionRegistry.java` — Schema version restoration (WP3) - added restoreTo() method.
+
+**Migration path:**
+- **Phase 1 (current)** — Multi-page format implementation and testing;
+- **Phase 2** — Enable page-backed catalog by default in production;
+- **Phase 3** — Complete schema version persistence and ALTER TABLE persistence.

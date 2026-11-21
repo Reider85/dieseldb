@@ -6,7 +6,7 @@
 
     <groupId>com.dieseldb</groupId>
     <artifactId>dieseldb</artifactId>
-<version>3.4.91</version>
+<version>3.4.92</version>
     <packaging>jar</packaging>
 
     <licenses>
@@ -262,6 +262,13 @@
                     </outputFormats>
                     <verbose>true</verbose>
                 </configuration>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-junit5-plugin</artifactId>
+                        <version>1.2.1</version>
+                    </dependency>
+                </dependencies>
             </plugin>
             
             <!-- Javadoc plugin for generating documentation -->

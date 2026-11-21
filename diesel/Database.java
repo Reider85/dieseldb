@@ -160,6 +160,15 @@ public class Database {
         this.catalog = new CatalogTable(null);
         try {
             createPageManager();
+            // Initialize catalog with page manager if available
+            if (pageManager != null) {
+                try {
+                    setCatalogPageManager(pageManager);
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to load catalog from pages, using heap-only catalog: " + e.getMessage(), e);
+                    // Keep heap-only catalog
+                }
+            }
         } catch (IOException e) {
             LOGGER.warn("Failed to create PageManager: " + e.getMessage(), e);
         }
@@ -200,6 +209,10 @@ public class Database {
         this.catalog = new CatalogTable(null);
         try {
             createPageManager();
+            // Initialize catalog with page manager if available
+            if (pageManager != null) {
+                setCatalogPageManager(pageManager);
+            }
             initializeWAL(walConfigOverride);
             loadTablesFromDisk();
         } catch (IOException e) {
@@ -710,17 +723,45 @@ public class Database {
 
     /**
      * Changes the directory used for the CSV and serialized table files,
-     * creating it when it does not exist yet.
+     * creating it when it does not exist yet. If the page manager exists
+     * and the data directory changes, rebinds the catalog to the new location.
      *
      * @param dataDir new data directory, or null/empty to keep the current one
      */
     public void setDataDir(String dataDir) {
+        String oldDataDir = this.dataDir;
         if (dataDir != null && !dataDir.isBlank()) {
             this.dataDir = dataDir;
         }
         File dir = new File(this.dataDir);
         if (!dir.exists()) {
             dir.mkdirs();
+        }
+        
+        // If page manager exists and data directory changed, rebind catalog
+        if (pageManager != null && !oldDataDir.equals(this.dataDir)) {
+            try {
+                // Stop existing subsystems that might be using the old page manager
+                stopPageFlusher();
+                stopPageScrubber();
+                
+                // Create new page manager in new location
+                diesel.storage.page.PageManager newPageManager = createPageManager();
+                
+                // Rebind catalog to new page manager
+                try {
+                    setCatalogPageManager(newPageManager);
+                } catch (Exception e) {
+                    LOGGER.warn("Failed to load catalog from new pages, keeping current catalog: " + e.getMessage(), e);
+                    // Keep current catalog
+                }
+                
+                // Note: RecoveryManager gets page manager from database when needed
+                
+                LOGGER.info("Rebound catalog to new data directory: {}", this.dataDir);
+            } catch (IOException e) {
+                LOGGER.warn("Failed to rebind catalog to new data directory: " + e.getMessage(), e);
+            }
         }
     }
 
@@ -3694,6 +3735,21 @@ public class Database {
                     tables.put(tableName, table);
                     LOGGER.info("Loaded table {} from disk with {} rows",
                             tableName, table.getLiveRowCount());
+                    
+                    // Restore schema version from catalog if available
+                    if (catalog != null) {
+                        long catalogVersion = catalog.getSchemaVersion(tableName);
+                        if (catalogVersion > 1) { // 1 is default for tables without version
+                            // Create a new version in the table's registry based on the catalog version
+                            // This preserves the current table structure but marks it as restored from catalog
+                            table.getSchemaVersions().createNewVersion(
+                                table.getColumns(), 
+                                table.getColumnTypes(), 
+                                "Restored from catalog version " + catalogVersion
+                            );
+                            LOGGER.debug("Restored schema version {} for table {}", catalogVersion, tableName);
+                        }
+                    }
                 }
             } catch (Exception e) {
                 LOGGER.warn("Failed to load table {} from disk, skipping: {}",
@@ -3884,6 +3940,11 @@ public class Database {
         
         vacuumManager.stop();
         saveTablesToDisk();
+        
+        // Close catalog page manager if available
+        if (catalog != null) {
+            catalog.close();
+        }
     }
 
     /**

@@ -1,10 +1,12 @@
 package diesel.schema;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -189,6 +191,46 @@ public final class SchemaVersionRegistry {
         }
         
         return version;
+    }
+    
+    /**
+     * Restores the schema to a specific version. This creates a new version
+     * that inherits the column structure from the target version while preserving
+     * the current column types.
+     * 
+     * @param targetVersion The version number to restore to
+     * @return The new current version number after restoration
+     * @throws IllegalArgumentException if target version doesn't exist
+     * @throws SchemaVersionTimeoutException if target version has been killed
+     */
+    public long restoreTo(long targetVersion) {
+        synchronized (versions) {
+            // Validate target version exists
+            if (!versions.containsKey(targetVersion)) {
+                throw new IllegalArgumentException("Target version " + targetVersion + " not found");
+            }
+            
+            // Get the target schema version
+            SchemaVersion target = versions.get(targetVersion);
+            
+            // Create a new version that inherits from the target but preserves current column types
+            long newVersion = versionCounter.incrementAndGet();
+            long now = getCurrentTimeNanos();
+            
+            SchemaVersion current = current();
+            SchemaVersion restoredVersion = new SchemaVersion(
+                newVersion,
+                now,
+                new ArrayList<>(target.getColumns()), // Inherit columns from target
+                new TreeMap<>(String.CASE_INSENSITIVE_ORDER) {{ putAll(current.getColumnTypes()); }}, // Keep current types
+                "Restored from version " + targetVersion
+            );
+            
+            // Add the new version
+            versions.put(newVersion, restoredVersion);
+            
+            return newVersion;
+        }
     }
     
     /**

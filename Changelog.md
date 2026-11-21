@@ -1097,3 +1097,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.90 Implement O_DIRECT support for DieselDB page storage
 
 3.4.91 CI7-P6: Fix permission validation in release-on-push.yml
+
+3.4.92 Implement multi-page catalog support to remove ~40-table limit and enable page-backed catalog in production
