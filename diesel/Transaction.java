@@ -326,11 +326,15 @@ class Transaction {
      */
     public void restoreBookkeeping(BookkeepingSnapshot snapshot) {
         Objects.requireNonNull(snapshot, "snapshot");
-        // Replace with snapshot's defensive copies
+        // Replace with snapshot's defensive copies (create new modifiable sets)
         this.modifiedRows.clear();
-        this.modifiedRows.putAll(snapshot.modifiedRows());
+        for (Map.Entry<String, Set<Integer>> entry : snapshot.modifiedRows().entrySet()) {
+            this.modifiedRows.put(entry.getKey(), new java.util.HashSet<>(entry.getValue()));
+        }
         this.deletedRows.clear();
-        this.deletedRows.putAll(snapshot.deletedRows());
+        for (Map.Entry<String, Set<Integer>> entry : snapshot.deletedRows().entrySet()) {
+            this.deletedRows.put(entry.getKey(), new java.util.HashSet<>(entry.getValue()));
+        }
     }
 
     /**

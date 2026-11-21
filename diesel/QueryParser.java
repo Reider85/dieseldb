@@ -1163,6 +1163,39 @@ class QueryParser {
                 return parseShowCreateIndexesQuery(n, d);
             }
         });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.SAVEPOINT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseSavepointQuery(o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.ROLLBACK_TO_SAVEPOINT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseRollbackToSavepointQuery(o, d);
+            }
+        });
+        strategies.add(new QueryParseStrategy() {
+            @Override
+            public boolean matches(String n) {
+                return n.startsWith(SqlKeywords.RELEASE_SAVEPOINT);
+            }
+            @Override
+            @SuppressWarnings("unused")
+            public Query<?> parse(String n, String o, Database d) {
+                return parseReleaseSavepointQuery(o, d);
+            }
+        });
         return strategies;
     }
 
@@ -3494,6 +3527,45 @@ LOGGER.debug("No WHERE clause in DELETE query");
         LOGGER.info("Parsed DELETE query: table={}, conditions={}", tableName, conditions);
 
         return new DeleteQuery(conditions);
+    }
+
+    /**
+     * Parses a SAVEPOINT name query (prompt4.md #26).
+     */
+    private Query<?> parseSavepointQuery(String originalQuery, Database database) {
+        Pattern pattern = Pattern.compile("(?i)^SAVEPOINT\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*;?\\s*$");
+        Matcher matcher = pattern.matcher(originalQuery.trim());
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("Invalid SAVEPOINT syntax: " + originalQuery);
+        }
+        String name = matcher.group(1);
+        return new SavepointQuery(name);
+    }
+
+    /**
+     * Parses a ROLLBACK TO SAVEPOINT name query (prompt4.md #26).
+     */
+    private Query<?> parseRollbackToSavepointQuery(String originalQuery, Database database) {
+        Pattern pattern = Pattern.compile("(?i)^ROLLBACK\\s+TO\\s+SAVEPOINT\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*;?\\s*$");
+        Matcher matcher = pattern.matcher(originalQuery.trim());
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("Invalid ROLLBACK TO SAVEPOINT syntax: " + originalQuery);
+        }
+        String name = matcher.group(1);
+        return new RollbackToSavepointQuery(name);
+    }
+
+    /**
+     * Parses a RELEASE SAVEPOINT name query (prompt4.md #26).
+     */
+    private Query<?> parseReleaseSavepointQuery(String originalQuery, Database database) {
+        Pattern pattern = Pattern.compile("(?i)^RELEASE\\s+SAVEPOINT\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*;?\\s*$");
+        Matcher matcher = pattern.matcher(originalQuery.trim());
+        if (!matcher.matches()) {
+            throw new IllegalArgumentException("Invalid RELEASE SAVEPOINT syntax: " + originalQuery);
+        }
+        String name = matcher.group(1);
+        return new ReleaseSavepointQuery(name);
     }
 
     private Object parseConditionValue(String valueStr, Class<?> columnType) {
