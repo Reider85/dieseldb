@@ -34,8 +34,7 @@ class RbacDdlTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
 
@@ -132,8 +131,7 @@ class RbacDdlTest {
         database.executeQuery("GRANT analyst TO alice", null);
         database.saveTablesToDisk();
 
-        Database reopened = new Database();
-        reopened.setDataDir(tempDir.toString());
+        Database reopened = new Database(tempDir.toString());
         reopened.loadTablesFromDisk();
         UserStore store = reopened.getUserStore();
         assertTrue(store.userExists("alice"));

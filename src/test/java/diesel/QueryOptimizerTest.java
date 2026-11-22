@@ -23,8 +23,7 @@ public class QueryOptimizerTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         QueryOptimizer.loadAdaptiveConfig();
         QueryOptimizer.clearCacheForTest();
     }

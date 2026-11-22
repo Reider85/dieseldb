@@ -32,8 +32,7 @@ public class CatalogFallbackTest {
     
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
     
     private int getTableCount(Database db) {
@@ -51,8 +50,7 @@ public class CatalogFallbackTest {
         deletePageFiles();
         
         // Create new database - should fall back to heap-only
-        Database fallbackDb = new Database();
-        fallbackDb.setDataDir(tempDir.toString());
+        Database fallbackDb = new Database(tempDir.toString());
         
         // Verify fallback worked
         assertNotNull(fallbackDb, "Database should be created successfully");
@@ -75,8 +73,7 @@ public class CatalogFallbackTest {
         corruptPageFiles();
         
         // Try to create new database - should fall back to heap-only
-        Database corruptedDb = new Database();
-        corruptedDb.setDataDir(tempDir.toString());
+        Database corruptedDb = new Database(tempDir.toString());
         
         // Verify fallback worked
         assertNotNull(corruptedDb, "Database should be created successfully despite corruption");
@@ -97,8 +94,7 @@ public class CatalogFallbackTest {
         partiallyCorruptPages();
         
         // Create database - should handle mixed scenario
-        Database mixedDb = new Database();
-        mixedDb.setDataDir(tempDir.toString());
+        Database mixedDb = new Database(tempDir.toString());
         
         // Verify some tables are accessible, others fall back
         assertTrue(getTableCount(mixedDb) > 0, "Should have some accessible tables");
@@ -119,8 +115,7 @@ public class CatalogFallbackTest {
         corruptPageFiles();
         
         // Create new database - should fall back but preserve some functionality
-        Database schemaFallbackDb = new Database();
-        schemaFallbackDb.setDataDir(tempDir.toString());
+        Database schemaFallbackDb = new Database(tempDir.toString());
         
         // Verify basic operations work even with fallback
         schemaFallbackDb.executeQuery("CREATE TABLE schema_fallback_test (ID LONG)", null);
@@ -158,8 +153,7 @@ public class CatalogFallbackTest {
         deletePageFiles(); // This deletes from original tempDir, not newDir
         
         // Create database - should work with new directory pages but fallback for old
-        Database dirFallbackDb = new Database();
-        dirFallbackDb.setDataDir(newDir.toString());
+        Database dirFallbackDb = new Database(newDir.toString());
         
         // Verify new directory tables work
         assertTrue(getTableCount(dirFallbackDb) >= 5, "Should have tables from new directory");
@@ -184,8 +178,7 @@ public class CatalogFallbackTest {
         corruptPageFiles();
         
         // Create new database with fallback
-        Database consistentDb = new Database();
-        consistentDb.setDataDir(tempDir.toString());
+        Database consistentDb = new Database(tempDir.toString());
         
         // Verify consistency - no data loss, just fallback
         assertEquals(12, getTableCount(consistentDb), "Should have 12 tables");
@@ -214,8 +207,7 @@ public class CatalogFallbackTest {
         
         // Create new database with fallback
         long startTime = System.currentTimeMillis();
-        Database perfFallbackDb = new Database();
-        perfFallbackDb.setDataDir(tempDir.toString());
+        Database perfFallbackDb = new Database(tempDir.toString());
         long creationTime = System.currentTimeMillis() - startTime;
         
         // Verify performance is reasonable
@@ -244,8 +236,7 @@ public class CatalogFallbackTest {
         corruptPageFiles();
         
         // Create fallback database
-        Database recoveryDb = new Database();
-        recoveryDb.setDataDir(tempDir.toString());
+        Database recoveryDb = new Database(tempDir.toString());
         
         // Verify fallback works
         assertNotNull(recoveryDb);
@@ -254,8 +245,7 @@ public class CatalogFallbackTest {
         restorePageFiles();
         
         // Create new database - should now use page-backed catalog
-        Database recoveredDb = new Database();
-        recoveredDb.setDataDir(tempDir.toString());
+        Database recoveredDb = new Database(tempDir.toString());
         
         // Verify it now uses page-backed catalog
         assertEquals(8, getTableCount(recoveredDb), "Should have all 8 tables");
@@ -271,8 +261,7 @@ public class CatalogFallbackTest {
     }
     
     private void createTestTables(int count, String dataDir) throws Exception {
-        Database db = new Database();
-        db.setDataDir(dataDir);
+        Database db = new Database(dataDir);
         
         for (int i = 0; i < count; i++) {
             String tableName = "test_table_" + i;

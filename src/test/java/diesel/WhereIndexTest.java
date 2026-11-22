@@ -26,8 +26,7 @@ public class WhereIndexTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
     @AfterEach

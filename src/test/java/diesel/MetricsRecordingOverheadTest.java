@@ -49,8 +49,7 @@ public class MetricsRecordingOverheadTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE OVERHEAD_BENCH (ID LONG PRIMARY KEY, NAME STRING)", null);
         database.executeQuery("INSERT INTO OVERHEAD_BENCH (ID, NAME) VALUES (1, 'row1')", null);

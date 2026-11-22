@@ -36,8 +36,7 @@ public class AuditTest {
     @BeforeEach
     void setUp() {
         System.setProperty(AuditTestSupport.ENABLED_KEY, "true");
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         userStore = database.getUserStore();
         authenticator = new Authenticator(userStore);
     }
@@ -140,8 +139,7 @@ public class AuditTest {
     @Test
     void embeddedQueriesAreAuditedAsEmbeddedUser() {
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery("CREATE TABLE EMB_T (ID INTEGER)", null);
 
         AuditTestSupport.flush(database);

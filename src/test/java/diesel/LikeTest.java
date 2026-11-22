@@ -26,8 +26,7 @@ public class LikeTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("CREATE UNIQUE INDEX ON USERS (ID)", null);
         database.executeQuery("CREATE INDEX ON USERS (AGE)", null);

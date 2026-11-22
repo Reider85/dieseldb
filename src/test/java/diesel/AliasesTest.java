@@ -26,8 +26,7 @@ public class AliasesTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         createUsersTable();
         createTransactionsTable();
         createUniqueIndex();

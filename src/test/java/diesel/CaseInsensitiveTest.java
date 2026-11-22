@@ -38,8 +38,7 @@ public class CaseInsensitiveTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(ci_seq 1 1), "
                         + "CI_NAME STRING COLLATE CASE_INSENSITIVE, CS_NAME STRING)",
@@ -137,8 +136,7 @@ public class CaseInsensitiveTest {
 
         // close() persists every table (.table format v5 carries the collation map).
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.loadTablesFromDisk();
 
         Table table = database.getTable(TABLE);

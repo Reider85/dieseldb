@@ -47,8 +47,7 @@ class CompactWithLargeRowVersionsTest {
 
     @Test
     void compactCompletesQuicklyWithLargeRowVersions() throws Exception {
-        db = new Database();
-        db.setDataDir(tempDir.toString());
+        db = new Database(tempDir.toString());
         String tableName = "COMPACT_LARGE_TEST";
         db.executeQuery("CREATE TABLE " + tableName
                 + " (ID LONG PRIMARY KEY, VAL STRING)", null);

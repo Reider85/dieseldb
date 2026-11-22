@@ -39,8 +39,7 @@ class PersistFlusherTest {
         System.setProperty("diesel.persist.deferred", "true");
         System.setProperty("diesel.persist.flush.interval.ms", "20");
         try {
-            Database db = new Database();
-            db.setDataDir(tempDir.toString());
+            Database db = new Database(tempDir.toString());
             db.executeQuery(
                     "CREATE TABLE PF_BG (ID LONG PRIMARY KEY SEQUENCE(pf_bg_seq 1 1), VAL STRING)",
                     null);
@@ -79,8 +78,7 @@ class PersistFlusherTest {
         System.setProperty("diesel.persist.background", "true");
         System.setProperty("diesel.persist.deferred", "false");
         try {
-            Database db = new Database();
-            db.setDataDir(tempDir.toString());
+            Database db = new Database(tempDir.toString());
             db.executeQuery(
                     "CREATE TABLE PF_SYNC (ID LONG PRIMARY KEY SEQUENCE(pf_sync_seq 1 1), VAL STRING)",
                     null);
@@ -109,8 +107,7 @@ class PersistFlusherTest {
         System.setProperty("diesel.persist.deferred", "true");
         System.setProperty("diesel.persist.max.pending", "4");
         try {
-            Database db = new Database();
-            db.setDataDir(tempDir.toString());
+            Database db = new Database(tempDir.toString());
             db.executeQuery(
                     "CREATE TABLE PF_THR (ID LONG PRIMARY KEY SEQUENCE(pf_thr_seq 1 1), VAL STRING)",
                     null);
@@ -137,8 +134,7 @@ class PersistFlusherTest {
         System.setProperty("diesel.persist.background", "true");
         System.setProperty("diesel.persist.flush.interval.ms", "10");
         try {
-            Database db = new Database();
-            db.setDataDir(tempDir.toString());
+            Database db = new Database(tempDir.toString());
             db.executeQuery(
                     "CREATE TABLE PF_RACE (ID LONG PRIMARY KEY SEQUENCE(pf_race_seq 1 1), VAL STRING)",
                     null);

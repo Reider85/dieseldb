@@ -46,8 +46,7 @@ public class OomHandlingTest {
 
 @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
 
         // The embedded database starts empty; create the bootstrap admin so
         // the wire probes can authenticate as admin/admin. Isolated to

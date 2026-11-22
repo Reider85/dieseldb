@@ -44,8 +44,7 @@ public class CopyAlgorithmTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {
@@ -159,8 +158,7 @@ public class CopyAlgorithmTest {
 
         // Restart: catalog + data files must both carry the copied schema.
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.loadTablesFromDisk();
 
         Table reopened = database.getTable(TABLE);

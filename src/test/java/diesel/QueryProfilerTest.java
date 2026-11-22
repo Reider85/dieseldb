@@ -39,8 +39,7 @@ public class QueryProfilerTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         dropTable();
         database.executeQuery("CREATE TABLE PROFILER_TEST (ID LONG PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         profiler = QueryProfiler.getInstance();

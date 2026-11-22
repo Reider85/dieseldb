@@ -34,8 +34,7 @@ public class OldVersionTimeoutTest {
     void setUp() {
         // Set moderate timeout for testing (reduced from 65s to 30s for faster execution)
         System.setProperty("schema.old.version.timeout.min", "30");
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
     @AfterEach
@@ -131,8 +130,7 @@ public class OldVersionTimeoutTest {
         System.setProperty("schema.old.version.timeout.min", "5");
         
         try {
-            database = new Database(); // Re-create with new timeout
-            database.setDataDir(tempDir.toString());
+            database = new Database(tempDir.toString()); // Re-create with new timeout
             database.createTable(TEST_TABLE, 
                 List.of("ID"), 
                 Map.of("ID", Integer.class), 

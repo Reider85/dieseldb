@@ -1101,3 +1101,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.92 Implement multi-page catalog support to remove ~40-table limit and enable page-backed catalog in production
 
 3.4.93 Implement SAVEPOINT functionality with comprehensive testing
+
+3.4.94 Fix CI test failure: Update NoSuchFileException by eliminating problematic Database initialization pattern
