@@ -23,8 +23,7 @@ class BatchQueryTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         try {
             database.dropTable("BATCH_TEST1");
         } catch (TableNotFoundException ignored) {

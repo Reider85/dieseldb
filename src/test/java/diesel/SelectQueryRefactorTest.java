@@ -25,8 +25,7 @@ public class SelectQueryRefactorTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         createUsers();
         insertUsers();
         createProfiles();

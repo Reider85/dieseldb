@@ -38,8 +38,7 @@ public class DeadCodeRemovalTest {
     void setUp() {
         new File(TABLE + ".csv").delete();
         new File(TABLE + ".table").delete();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery("CREATE TABLE " + TABLE
                 + " (ID LONG PRIMARY KEY, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, BALANCE) VALUES (1, 'Alice', 30, 100.5)", null);

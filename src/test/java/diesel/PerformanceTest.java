@@ -19,6 +19,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.io.*;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 @Tag("perf")
 public class PerformanceTest {
@@ -46,12 +47,12 @@ public class PerformanceTest {
     private final Database database;
 
     public PerformanceTest() {
-        this.database = new Database();
         // Own data directory per run: the shared CWD ./data would otherwise be
         // polluted by the benchmark tables. Manual temp dir because the
         // constructor runs before JUnit could inject an instance @TempDir.
         try {
-            this.database.setDataDir(Files.createTempDirectory("diesel-perf").toString());
+            Path tempDir = Files.createTempDirectory("diesel-perf");
+            this.database = new Database(tempDir.toString());
         } catch (IOException e) {
             throw new java.io.UncheckedIOException(e);
         }

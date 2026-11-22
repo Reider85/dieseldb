@@ -32,8 +32,7 @@ public class AutoJoinIndexTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         dropTables();
         // SelectQuery logs via SLF4J since the JUL->SLF4J migration, so a JUL
         // Handler never sees the warning - capture with Slf4jLogCapture instead.

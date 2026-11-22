@@ -29,8 +29,7 @@ public class SubqueriesTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         createTable();
         createUniqueIndex();
         createBTreeIndex();

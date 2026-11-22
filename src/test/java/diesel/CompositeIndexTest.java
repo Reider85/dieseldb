@@ -27,8 +27,7 @@ public class CompositeIndexTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
     @AfterEach

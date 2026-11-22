@@ -43,8 +43,7 @@ class SnapshotToStringIsCheapTest {
 
     @Test
     void toStringContainsCorrectRowCount() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         Table table = new Table(database, "tostring_test", List.of("id", "name"),
                 Map.of("id", Integer.class, "name", String.class), "id", Map.of());
         
@@ -72,8 +71,7 @@ class SnapshotToStringIsCheapTest {
     
     @Test
     void toStringCheapAfterFirstCall() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         Table table = new Table(database, "cheap_test", List.of("id", "name"),
                 Map.of("id", Integer.class, "name", String.class), "id", Map.of());
         
@@ -135,8 +133,7 @@ class SnapshotToStringIsCheapTest {
     
     @Test
     void toStringWithDifferentRowCounts() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Test with 1 row
         Table table1 = new Table(database, "one_row", List.of("id", "name"),

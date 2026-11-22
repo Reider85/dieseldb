@@ -32,8 +32,7 @@ public class TombstoneTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {
@@ -114,8 +113,7 @@ public class TombstoneTest {
         // saveToSerializedFile compacts first, so rows are written stripped and
         // the format-v4 hidden set travels with them.
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.loadTablesFromDisk();
 
         Table reopened = database.getTable(TABLE);

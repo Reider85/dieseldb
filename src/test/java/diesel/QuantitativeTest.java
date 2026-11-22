@@ -21,6 +21,7 @@ import java.util.logging.Logger;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Heavy ORDER BY + JOIN tests that require 600-row tables (360 k row cross-product).
@@ -40,13 +41,13 @@ public class QuantitativeTest {
     private int failed = 0;
 
     public QuantitativeTest() {
-        this.database = new Database();
         // Own data directory per run: the shared CWD ./data would otherwise be
         // polluted by the 600-row USERS/PROFILES fixtures. Manual temp dir
         // because with @TestInstance(PER_CLASS) an instance @TempDir is still
         // null in @BeforeAll (verified empirically, TESTS-3).
         try {
-            this.database.setDataDir(Files.createTempDirectory("diesel-quantitative").toString());
+            Path tempDir = Files.createTempDirectory("diesel-quantitative");
+            this.database = new Database(tempDir.toString());
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

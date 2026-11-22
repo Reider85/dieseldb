@@ -26,8 +26,7 @@ public class UpdateTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), "
                         + "USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);

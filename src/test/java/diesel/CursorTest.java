@@ -39,8 +39,7 @@ public class CursorTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         dropTable();
 
         // The embedded database starts empty; create the bootstrap admin for

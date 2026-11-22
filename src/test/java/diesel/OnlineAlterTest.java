@@ -53,8 +53,7 @@ public class OnlineAlterTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         try {
             database.dropTable(TABLE);
         } catch (RuntimeException ignored) {

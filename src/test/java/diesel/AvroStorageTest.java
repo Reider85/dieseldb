@@ -47,8 +47,7 @@ class AvroStorageTest {
     void setUp() {
         prevStorageType = System.getProperty("diesel.storage.type");
         System.setProperty("diesel.storage.type", "avro");
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(user_seq 1 1), "
                         + "USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, ACTIVE BOOLEAN)", null);
@@ -275,8 +274,7 @@ class AvroStorageTest {
         insertRows(50);
 
         // Create a new Database instance pointing at the same data dir
-        Database db2 = new Database();
-        db2.setDataDir(tempDir.toString());
+        Database db2 = new Database(tempDir.toString());
         db2.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(user_seq 1 1), "
                         + "USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, ACTIVE BOOLEAN)", null);
@@ -441,8 +439,7 @@ class AvroStorageTest {
                         + "('FULL', 'AllTypes', 42, 9999.99, TRUE)", null);
         database.getTable("USERS").saveToFile("USERS");
 
-        Database db2 = new Database();
-        db2.setDataDir(tempDir.toString());
+        Database db2 = new Database(tempDir.toString());
         db2.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(user_seq 1 1), "
                         + "USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL, ACTIVE BOOLEAN)", null);

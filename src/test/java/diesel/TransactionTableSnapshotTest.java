@@ -22,8 +22,7 @@ class TransactionTableSnapshotTest {
     
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         txStatusTracker = database.getTxStatusTracker();
         testTable = new Table(database, "test", List.of("id", "name"), 
                             Map.of("id", Integer.class, "name", String.class), "id", Map.of());

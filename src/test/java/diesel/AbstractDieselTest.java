@@ -54,7 +54,7 @@ public abstract class AbstractDieselTest {
     @TempDir
     protected static Path tempDir;
 
-    protected final Database database = new Database();
+    protected Database database;
     protected int passed = 0;
     protected int failed = 0;
 
@@ -67,6 +67,7 @@ public abstract class AbstractDieselTest {
 
     @BeforeAll
     void setupCommonTables() {
+        database = new Database(tempDir.toString());
         database.setDataDir(tempDir.toString());
         dropTable("USERS");
         dropTable("PROFILES");

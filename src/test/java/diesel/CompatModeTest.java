@@ -40,8 +40,7 @@ public class CompatModeTest {
     @BeforeEach
     void setUp() {
         previousFlag = System.getProperty(FLAG);
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
     @AfterEach

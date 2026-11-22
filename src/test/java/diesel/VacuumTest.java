@@ -73,9 +73,8 @@ class VacuumTest {
 
     @Test
     void vacuumReclaimsAtLeastThirtyPercentOfHeapOnMillionRowTable() throws Exception {
-        Database db = new Database();
+        Database db = new Database(tempDir.toString());
         openDb = db;
-        db.setDataDir(tempDir.toString());
         String tableName = "VAC_HEAP";
         db.executeQuery("CREATE TABLE " + tableName
                 + " (ID LONG PRIMARY KEY SEQUENCE(vac_heap_seq 1 1), VAL STRING)", null);
@@ -164,9 +163,8 @@ class VacuumTest {
     }
 
     private void runVacuumWriterLatencyAcceptance() throws Exception {
-        Database db = new Database();
+        Database db = new Database(tempDir.toString());
         openDb = db;
-        db.setDataDir(tempDir.toString());
         String heavy = "VAC_WRITE_A";
         String writerTable = "VAC_WRITE_B";
         db.executeQuery("CREATE TABLE " + heavy

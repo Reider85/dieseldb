@@ -42,8 +42,7 @@ public class NullSafetyTest {
         new File(TABLE + ".table").delete();
         new File(TABLE_B + ".csv").delete();
         new File(TABLE_B + ".table").delete();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery("CREATE TABLE " + TABLE
                 + " (ID LONG PRIMARY KEY, NAME STRING, SCORE INTEGER)", null);
         database.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, SCORE) VALUES (1, 'Alice', 10)", null);

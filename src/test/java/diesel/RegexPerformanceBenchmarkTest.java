@@ -50,8 +50,7 @@ public class RegexPerformanceBenchmarkTest {
         java.util.logging.Logger.getLogger("diesel.QueryParser").setLevel(java.util.logging.Level.WARNING);
         java.util.logging.Logger.getLogger("diesel.SelectQueryParser").setLevel(java.util.logging.Level.WARNING);
         java.util.logging.Logger.getLogger("diesel.ConditionParser").setLevel(java.util.logging.Level.WARNING);
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)",
                 null);

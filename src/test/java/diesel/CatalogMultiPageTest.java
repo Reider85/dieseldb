@@ -34,8 +34,7 @@ public class CatalogMultiPageTest {
     
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
     
     private int getTableCount(Database db) {
@@ -104,8 +103,7 @@ public class CatalogMultiPageTest {
         
         // Close and reopen database
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Verify all tables and data are preserved
         assertEquals(30, getTableCount(database));
@@ -143,8 +141,7 @@ public class CatalogMultiPageTest {
         
         // Close and reopen database
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Verify schema versions are preserved
         for (int i = 0; i < 25; i++) {
@@ -198,8 +195,7 @@ public class CatalogMultiPageTest {
         }
         
         // Try to reopen database - should handle corruption gracefully
-        Database newDb = new Database();
-        newDb.setDataDir(tempDir.toString());
+        Database newDb = new Database(tempDir.toString());
         
         // Should fall back to heap-only catalog and still work
         assertTrue(getTableCount(newDb) <= 15, 

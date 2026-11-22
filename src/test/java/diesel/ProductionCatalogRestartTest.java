@@ -32,8 +32,7 @@ public class ProductionCatalogRestartTest {
     
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
     
     private int getTableCount(Database db) {
@@ -53,8 +52,7 @@ public class ProductionCatalogRestartTest {
         database.close();
         
         // Reopen database
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Verify schema versions are restored
         verifySchemaVersionsRestored();
@@ -72,8 +70,7 @@ public class ProductionCatalogRestartTest {
         for (int cycle = 1; cycle <= 3; cycle++) {
             // Close and reopen database
             database.close();
-            database = new Database();
-            database.setDataDir(tempDir.toString());
+            database = new Database(tempDir.toString());
             
             // Verify data consistency
             verifyProductionDataConsistency();
@@ -97,8 +94,7 @@ public class ProductionCatalogRestartTest {
         
         // Close and restart
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Verify large catalog survives restart
         assertEquals(60, getTableCount(database));
@@ -123,8 +119,7 @@ public class ProductionCatalogRestartTest {
         
         // Close and restart
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         
         // Verify mixed schema versions are preserved
         verifyMixedSchemaPreservation();
@@ -181,8 +176,7 @@ public class ProductionCatalogRestartTest {
         
         // Close and restart in new location
         database.close();
-        database = new Database();
-        database.setDataDir(newDir.toString());
+        database = new Database(newDir.toString());
         
         // Verify catalog works in new location
         verifyRelocatedCatalog();

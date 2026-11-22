@@ -38,8 +38,7 @@ public class AuditRetentionTest {
         System.setProperty("audit.retention.days", "1");
         System.setProperty("audit.retention.interval.ms", "0");
         System.setProperty("audit.archive.dir", tempDir.resolve("audit-archive").toString());
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
     }
 
     @AfterEach

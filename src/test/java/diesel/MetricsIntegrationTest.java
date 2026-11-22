@@ -35,8 +35,7 @@ public class MetricsIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.executeQuery(
                 "CREATE TABLE METRICS_IT (ID LONG PRIMARY KEY, NAME STRING)", null);
     }

@@ -156,8 +156,7 @@ testTable = new Table(testDatabase, "test", List.of("id", "name"),
         String previous = System.getProperty("undo.spill.threshold.mb");
         System.setProperty("undo.spill.threshold.mb", "1");
         try {
-            db = new Database();
-            db.setDataDir(tempDir.toString());
+            db = new Database(tempDir.toString());
             db.executeQuery("CREATE TABLE SPILL_ACCEPT (ID LONG PRIMARY KEY SEQUENCE(spill_accept_seq 1 1), VAL STRING)", null);
             for (int i = 0; i < 5; i++) {
                 db.executeQuery("INSERT INTO SPILL_ACCEPT (VAL) VALUES ('seed" + i + "')", null);

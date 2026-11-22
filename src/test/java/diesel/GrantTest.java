@@ -31,8 +31,7 @@ public class GrantTest {
     
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         userStore = database.getUserStore();
         authenticator = new Authenticator(userStore);
     }

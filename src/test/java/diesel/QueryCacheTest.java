@@ -23,8 +23,7 @@ public class QueryCacheTest {
 
     @BeforeEach
     void setUp() {
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         dropTable();
         database.executeQuery("CREATE TABLE CACHE_TEST (ID LONG PRIMARY KEY, NAME STRING)", null);
     }

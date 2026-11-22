@@ -53,10 +53,8 @@ public class BulkLoadEquivalenceTest {
 
     @BeforeAll
     void buildBothPaths() throws IOException {
-        insertPath = new Database();
-        insertPath.setDataDir(tempDir.resolve("insert_path").toString());
-        bulkPath = new Database();
-        bulkPath.setDataDir(tempDir.resolve("bulk_path").toString());
+        insertPath = new Database(tempDir.resolve("insert_path").toString());
+        bulkPath = new Database(tempDir.resolve("bulk_path").toString());
         createSchema(insertPath);
         createSchema(bulkPath);
         for (int i = 1; i <= N; i++) {

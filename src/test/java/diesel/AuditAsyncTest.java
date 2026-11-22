@@ -39,8 +39,7 @@ public class AuditAsyncTest {
     @BeforeEach
     void setUp() {
         System.setProperty(AuditTestSupport.ENABLED_KEY, "true");
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         userStore = database.getUserStore();
         authenticator = new Authenticator(userStore);
     }
@@ -78,8 +77,7 @@ public class AuditAsyncTest {
 
         // close() performs the final drain; every record must be durable.
         database.close();
-        database = new Database();
-        database.setDataDir(tempDir.toString());
+        database = new Database(tempDir.toString());
         database.loadTablesFromDisk();
         AuditTestSupport.flush(database);
         List<Map<String, Object>> rows = database
