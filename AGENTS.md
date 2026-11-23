@@ -68,6 +68,31 @@ Skip `make timing` and `make check-profile` for non-performance changes.
 
 ## Debugging Workflow (for test failures)
 
+0. **CI log triage FIRST (before any grep-spree):** if you were handed a CI log
+   (often 10–15 MB / 70k+ lines of per-INSERT INFO), extract ONE digest instead of
+   grepping it 100 times (a session burned 108 greps + 12 context compactions this way):
+   ```powershell
+   # all failures + per-class summaries in one pass
+   Select-String -Path "<ci-log>" -Pattern "\[ERROR\].*<<< (FAILURE|ERROR)!|Tests run:.*(Failures: [1-9]|Errors: [1-9])" |
+     ForEach-Object { $_.Line.Substring(0, [Math]::Min(200, $_.Line.Length)) }
+   ```
+   Hard limits: **≤5 commands** per log file; for logs >1 MB delegate the digest to an
+   `@explore` subagent and consume only its ≤50-line summary. Do **not** read
+   `prompt4.md`/`prompt3.md` (the prompt backlog) while fixing CI — that is a separate
+   task and re-reads of a 1600-line file after each compaction dominated the session.
+
+   **Known failure signatures** (fix mechanically, don't re-derive from scratch):
+   | Signature in log | Root cause | Fix |
+   |---|---|---|
+   | `Table X already exists` in query-full tests | `static @TempDir` shared by all methods of a class + `new Database(dir)` (since 2b6fc2d) loads tables persisted by the previous method | drop-before-create in `setUp()` — pattern in `JoinTest.dropTables()` / `LazyDeleteTest` |
+   | `LOGBACK: No context given for ...$1` | anonymous logback `AppenderBase` added via `addAppender` without `setContext`/`start` → events silently dropped | `appender.setContext(logger.getContext()); appender.start()` before add, `stop()` in finally (`MaxResultRowsTest`) |
+   | `NoSuchFileException: data/pages.db` | two-step `new Database(); setDataDir(...)` init | single-step `new Database(dir)` ctor (commit 2b6fc2d) |
+
+**Compaction discipline:** keep the fix state (failing classes → root cause → fix
+status) in the todo list / a short notes file and re-read ONLY that after a context
+compaction. A session that re-derived state from the 15 MB log and `prompt3.md`
+suffered 12 compactions and 24 re-reads of the same files.
+
 1. Isolate the test: `make test-one T=TestClassName#methodName`
 2. Fix the code
 3. Re-run isolated: `make test-one T=TestClassName#methodName`
@@ -253,6 +278,10 @@ If you accidentally stage them, run: `git rm -r --cached target/ data/ logs/ tim
 ```powershell
 .\scripts\mvn.ps1 -B test -P core -Dtest="SomeCoreTest#someMethod"
 ```
+
+**PIT mutation testing runs ONLY with `-P mutation`** (moved out of the default `test` phase; before that every `mvn test` took 144–300s and 3 runs were killed by the 300s anti-hang cap). If a plain `make test`/`mvn test` prints `PIT >>` lines, the pitest execution crept back into the main build — move it into the `mutation` profile in `pom.xml`.
+
+**`scripts/mvn.ps1` has NO "no tests ran" guard** (unlike `make.ps1` → `Assert-TestsRan`). After any raw `mvn.ps1 ... -P <profile> -Dtest=...` run, manually verify the output contains `Tests run: N` with **N > 0** — a wrong profile silently runs 0 tests and still prints BUILD SUCCESS.
 **Quarantined `@Tag("flaky")` tests run through neither command** — every gate excludes them (`surefire.excludedGroups` ends in `,flaky`). Run them only via `make test-flaky` (profile `flaky` sets `diesel.runFlaky=true`), see Known Flakes.
 
 **Adding a new `@Tag("flaky")` test (since TESTS-18):** every new flaky test is automatically included in profile `flaky-jsonl` under `diesel.storage.type=jsonl`. If the test is storage-agnostic and fast under jsonl, no action is needed. If the test is slow or broken under jsonl (precedent: `FlusherTest`'s 50k-insert loop took 14 min for 5k rows under jsonl — explicitly excluded in `flaky-jsonl`'s `<excludes>` block in pom.xml), add its path to that block. The script `scripts/check-flaky-jsonl-compat.sh` runs as the first step of `make test-flaky` and as a CI step — it fails the build if a stale `<exclude>` references a deleted test file. It does NOT fail for missing exclusions (those are a judgment call), but the CI log lists every `@StorageType`-less flaky class so the maintainer can review.

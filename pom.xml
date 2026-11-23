@@ -226,52 +226,11 @@
                 </executions>
             </plugin>
             
-            <!-- PITest mutation testing plugin -->
-            <plugin>
-                <groupId>org.pitest</groupId>
-                <artifactId>pitest-maven</artifactId>
-                <version>1.15.3</version>
-                <executions>
-                    <execution>
-                        <id>mutation-testing</id>
-                        <phase>test</phase>
-                        <goals>
-                            <goal>mutationCoverage</goal>
-                        </goals>
-                    </execution>
-                </executions>
-                <configuration>
-                    <targetClasses>
-                        <param>diesel.*</param>
-                    </targetClasses>
-                    <targetTests>
-                        <param>diesel.*Test</param>
-                    </targetTests>
-                    <mutators>
-                        <mutator>ALL</mutator>
-                    </mutators>
-                    <thresholds>
-                        <threshold>
-                            <metric>MUTATION_COVERAGE</metric>
-                            <percentage>50</percentage>
-                        </threshold>
-                    </thresholds>
-                    <outputFormats>
-                        <outputFormat>HTML</outputFormat>
-                        <outputFormat>XML</outputFormat>
-                    </outputFormats>
-                    <verbose>true</verbose>
-                </configuration>
-                <dependencies>
-                    <dependency>
-                        <groupId>org.pitest</groupId>
-                        <artifactId>pitest-junit5-plugin</artifactId>
-                        <version>1.2.1</version>
-                    </dependency>
-                </dependencies>
-            </plugin>
-            
             <!-- Javadoc plugin for generating documentation -->
+            <!-- PITest mutation testing: moved to the <id>mutation</id> profile below.
+                 Running mutationCoverage on every `mvn test` made local runs take
+                 144-300s (AGENTS.md anti-hang table predates this binding) and could
+                 stall green CI runs. Opt in with: mvn test -P mutation -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-javadoc-plugin</artifactId>
@@ -542,7 +501,7 @@
                                  oversubscription) - 34.5 min + starvation reds;
                                  attempt 2 (1 fork x 4, -Xmx1g) - 18.4 min but
                                  shared-heap/global-state reds (JMX, sysprops,
-                                 GC-polluted µs proofs); attempt 3 (1 fork, 2g)
+                                 GC-polluted Вµs proofs); attempt 3 (1 fork, 2g)
                                  - 24.9 min, yet another victim family each run;
                                  attempt 4 (2 forks, reuseForks=false) - 26 min,
                                  3106/3107 green, sole red = CopyAlgorithmTest
@@ -588,7 +547,7 @@
         </profile>
 
         <!-- ============ FLAKY: quarantine opt-in (TESTS-5) ============
-             Runs ONLY the tests tagged @Tag("flaky") — the documented
+             Runs ONLY the tests tagged @Tag("flaky") вЂ” the documented
              pre-existing/environmental flakes quarantined from every gate
              (surefire.excludedGroups now ends in ",flaky" everywhere).
              The systemPropertyVariables below are what makes the quarantined
@@ -597,8 +556,8 @@
                diesel.largeTests=true   -> @LargeTest (1M-row benchmark) gate opens
                junit.jupiter...parallel.enabled=false -> the heavy tests run one
                    after another instead of competing for CPU.
-             Engine storage stays at the config.properties default (csv) —
-             FlusherTest's 50k-insert loop is O(n²) on full-file rewrites and
+             Engine storage stays at the config.properties default (csv) вЂ”
+             FlusherTest's 50k-insert loop is O(nВІ) on full-file rewrites and
              takes hours under jsonl (observed: 14 min for the first 5k rows).
              The JSONL-quarantined benchmark has its own profile below. -->
         <profile>
@@ -633,7 +592,7 @@
              (csv) -> the class is disabled in EVERY other profile (this is also
              why it no longer runs in gates at all). This profile enables it via
              diesel.storage.type=jsonl; the two engine-level quarantined tests are
-             excluded here (they would be flaky-tagged and slow under jsonl) —
+             excluded here (they would be flaky-tagged and slow under jsonl) вЂ”
              they belong to the 'flaky' profile above. -->
         <profile>
 <id>flaky-jsonl</id>
@@ -716,7 +675,7 @@
             </build>
         </profile>
 
-        <!-- Profiles `test` and `ci` were removed in TESTS-17 — they were dead code with problematic topology.
+        <!-- Profiles `test` and `ci` were removed in TESTS-17 вЂ” they were dead code with problematic topology.
      Profile `test` was a duplicate of `fast`; the Maven lifecycle phase `mvn test` is unrelated and 
      still requires `-P <profile>` to run any test (the default surefire config excludes `**/*.java`).
      Profile `ci` used `forkCount=2, reuseForks=true, parallel=classes` topology that was the source 
@@ -842,6 +801,9 @@
         </profile>
 
         <!-- ============ MUTATION TESTING: weekly mutation coverage analysis ============ -->
+        <!-- PITest lives ONLY here: binding mutationCoverage to the default test phase made
+             every `mvn test`/`make test` take 144-300s and could stall green CI runs.
+             Opt in: mvn test -P mutation -->
         <profile>
             <id>mutation</id>
             <properties>
@@ -859,6 +821,49 @@
                             <reuseForks>false</reuseForks>
                             <argLine>-Xmx2g</argLine>
                         </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.pitest</groupId>
+                        <artifactId>pitest-maven</artifactId>
+                        <version>1.15.3</version>
+                        <executions>
+                            <execution>
+                                <id>mutation-testing</id>
+                                <phase>test</phase>
+                                <goals>
+                                    <goal>mutationCoverage</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <targetClasses>
+                                <param>diesel.*</param>
+                            </targetClasses>
+                            <targetTests>
+                                <param>diesel.*Test</param>
+                            </targetTests>
+                            <mutators>
+                                <mutator>ALL</mutator>
+                            </mutators>
+                            <thresholds>
+                                <threshold>
+                                    <metric>MUTATION_COVERAGE</metric>
+                                    <percentage>50</percentage>
+                                </threshold>
+                            </thresholds>
+                            <outputFormats>
+                                <outputFormat>HTML</outputFormat>
+                                <outputFormat>XML</outputFormat>
+                            </outputFormats>
+                            <verbose>true</verbose>
+                        </configuration>
+                        <dependencies>
+                            <dependency>
+                                <groupId>org.pitest</groupId>
+                                <artifactId>pitest-junit5-plugin</artifactId>
+                                <version>1.2.1</version>
+                            </dependency>
+                        </dependencies>
                     </plugin>
                 </plugins>
             </build>
