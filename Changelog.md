@@ -1103,3 +1103,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.93 Implement SAVEPOINT functionality with comprehensive testing
 
 3.4.94 Fix CI test failure: Update NoSuchFileException by eliminating problematic Database initialization pattern
+
+3.4.95 Move PITest from test phase to mutation profile; add CI-log triage guidance to AGENTS.md
