@@ -27,6 +27,13 @@ public class UpdateTest {
     @BeforeEach
     void setUp() {
         database = new Database(tempDir.toString());
+        // static @TempDir is shared across methods; the ctor reloads the
+        // previous method's persisted USERS — drop before create (see JoinTest).
+        try {
+            database.dropTable("USERS");
+        } catch (TableNotFoundException e) {
+            // first run — table does not exist yet
+        }
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), "
                         + "USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);

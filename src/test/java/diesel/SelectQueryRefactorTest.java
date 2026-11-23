@@ -1,6 +1,7 @@
 package diesel;
 
 import diesel.Database;
+import diesel.TableNotFoundException;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,9 +27,39 @@ public class SelectQueryRefactorTest {
     @BeforeEach
     void setUp() {
         database = new Database(tempDir.toString());
-        createUsers();
+        try {
+            createUsers();
+        } catch (IllegalArgumentException e) {
+            // Table already exists, drop it and recreate
+            if (e.getMessage() != null && e.getMessage().contains("Table USERS already exists")) {
+                try {
+                    database.executeQuery("DROP TABLE USERS", null);
+                    createUsers();
+                } catch (TableNotFoundException ex) {
+                    // Table doesn't exist, safe to create
+                    createUsers();
+                }
+            } else {
+                throw e;
+            }
+        }
         insertUsers();
-        createProfiles();
+        try {
+            createProfiles();
+        } catch (IllegalArgumentException e) {
+            // Table already exists, drop it and recreate
+            if (e.getMessage() != null && e.getMessage().contains("Table PROFILES already exists")) {
+                try {
+                    database.executeQuery("DROP TABLE PROFILES", null);
+                    createProfiles();
+                } catch (TableNotFoundException ex) {
+                    // Table doesn't exist, safe to create
+                    createProfiles();
+                }
+            } else {
+                throw e;
+            }
+        }
         insertProfiles();
     }
 

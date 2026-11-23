@@ -186,7 +186,14 @@ public class MaxResultRowsTest {
                 captured.add(event);
             }
         };
-        ((ch.qos.logback.classic.Logger) logger).addAppender(appender);
+        // Logger.addAppender() does NOT setContext()/start() the appender:
+        // without them doAppend() drops every event (logback prints
+        // "LOGBACK: No context given for ..." and never calls append()),
+        // so captured stayed empty and the assertion below always failed.
+        ch.qos.logback.classic.Logger lbLogger = (ch.qos.logback.classic.Logger) logger;
+        appender.setContext((ch.qos.logback.classic.LoggerContext) LoggerFactory.getILoggerFactory());
+        appender.start();
+        lbLogger.addAppender(appender);
         try {
             SelectQuery.setMaxResultRowsForTest(100);
             List<Map<String, Object>> result = runSelect("SELECT * FROM MRT_LEFT");
@@ -197,7 +204,8 @@ public class MaxResultRowsTest {
                                     && event.getMessage().contains("approaching the maximum allowed row limit")),
                     "a query reaching 80% of the limit must log a single warning");
         } finally {
-            ((ch.qos.logback.classic.Logger) logger).detachAppender(appender);
+            lbLogger.detachAppender(appender);
+            appender.stop();
         }
     }
 }

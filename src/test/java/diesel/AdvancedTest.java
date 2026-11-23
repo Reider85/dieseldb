@@ -32,6 +32,14 @@ public class AdvancedTest {
     @BeforeEach
     void setUp() {
         database = new Database(tempDir.toString());
+        // static @TempDir is shared by all test methods: the previous method's
+        // Database persisted USERS to disk, and this ctor loads it back —
+        // drop it so CREATE TABLE below always starts clean (see JoinTest).
+        try {
+            database.dropTable("USERS");
+        } catch (TableNotFoundException e) {
+            // first run — table does not exist yet
+        }
         database.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("CREATE UNIQUE INDEX ON USERS (ID)", null);
         database.executeQuery("CREATE INDEX ON USERS (AGE)", null);
