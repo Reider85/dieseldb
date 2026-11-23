@@ -44,11 +44,25 @@ public class AnalyzeTableTest {
     }
 
     private void createUsersTable() {
+        // static @TempDir is shared across methods; a previous method's Database
+        // persisted USERS — drop before create (see JoinTest).
+        try {
+            database.dropTable("USERS");
+        } catch (TableNotFoundException e) {
+            // first run — table does not exist yet
+        }
         database.executeQuery(
                 "CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
     }
 
     private void createDetailsTable() {
+        // USER_DETAILS is created by two tests (smallTables/largerTables) —
+        // the second one must not collide with the first one's persisted table.
+        try {
+            database.dropTable("USER_DETAILS");
+        } catch (TableNotFoundException e) {
+            // first run — table does not exist yet
+        }
         database.executeQuery(
                 "CREATE TABLE USER_DETAILS (DETAIL_ID LONG PRIMARY KEY SEQUENCE(detail_seq 1 1), USER_ID LONG, USER_CODE STRING, NAME STRING, AGE INTEGER, INFO STRING, BALANCE BIGDECIMAL)", null);
     }

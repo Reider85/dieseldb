@@ -27,6 +27,12 @@ public class LazyDeleteTest {
     @BeforeEach
     void setUp() {
         database = new Database(tempDir.toString());
+        // Clean up any existing table to avoid conflicts in parallel test execution
+        try {
+            database.dropTable("USERS");
+        } catch (TableNotFoundException e) {
+            // Table might not exist, which is fine
+        }
         database.executeQuery("CREATE TABLE USERS (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), USER_CODE STRING, NAME STRING, AGE INTEGER, BALANCE BIGDECIMAL)", null);
         database.executeQuery("CREATE UNIQUE INDEX ON USERS (ID)", null);
         database.executeQuery("CREATE INDEX ON USERS (AGE)", null);
