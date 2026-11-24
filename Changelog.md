@@ -1143,3 +1143,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.13 Pin dependency-check-maven to 12.2.2: 13.0.0 regression #8715 (bundled nvd.api.key= empty string aborts keyless runs with NvdApiException length of 0); 12.2.2 verified locally to start the NVD pull without a key
 
 3.5.14 Fix Security Scanning: use -Dformats=HTML,JSON (String[] param splits on comma) instead of -Dformat (single string -> template HTML,JSON.vsl not found); NVD pull with API key verified green-path in 2m52s
+
+3.5.15 Fix Security Scanning cache race: security-scan won the setup-java maven cache save (key=hash of pom.xml only) so dependency-scan's cache with the plugin was dropped and every next run re-resolved it from Central -> HTTP 429; give dependency-scan its own cache-dependency-path key and retry mvn up to 3x
