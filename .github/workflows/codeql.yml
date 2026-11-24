@@ -6,12 +6,14 @@ on:
       - 'src/**'
       - 'pom.xml'
       - 'diesel/**'
+      - '.github/workflows/codeql.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'src/**'
       - 'pom.xml'
       - 'diesel/**'
+      - '.github/workflows/codeql.yml'
   schedule:
     - cron: '0 2 * * 1'  # Weekly on Monday at 2 AM UTC
   workflow_dispatch:
@@ -59,7 +61,7 @@ jobs:
   dependency-scan:
     name: Dependency Vulnerability Scan
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       security-events: write
@@ -75,17 +77,33 @@ jobs:
           java-version: 21
           cache: maven
 
+      - name: Restore dependency-check NVD data cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.dependency-check-data
+          key: dc-data-${{ github.run_id }}
+          restore-keys: |
+            dc-data-
+
       - name: Run dependency-check
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
-          # Install dependency-check
-          wget -q https://github.com/jeremylong/DependencyCheck/releases/download/v8.2.1/dependency-check-8.2.1-release.zip
-          unzip -q dependency-check-8.2.1-release.zip
-          mv dependency-check-8.2.1/* /usr/local/bin/
-          rmdir dependency-check-8.2.1
-          rm dependency-check-8.2.1-release.zip
-          
-          # Run scan
-          dependency-check --project "DieselDB" --scan ./diesel --format JSON --output ./dependency-check-report.json
+          # OWASP dependency-check via the Maven plugin: scans the real
+          # dependency tree from pom.xml (the old CLI `--scan ./diesel`
+          # found zero jars) and pulls NVD data through the NVD API 2.0
+          # (the legacy JSON/XML feeds used by 8.2.1 are gone).
+          set -euo pipefail
+          ARGS=(
+            -DdataDirectory="$HOME/.dependency-check-data"
+            -Dformat=HTML,JSON
+            -DfailBuildOnCVSS=11
+          )
+          if [ -n "${NVD_API_KEY:-}" ]; then
+            ARGS+=(-DnvdApiKeyEnvironmentVariable=NVD_API_KEY)
+          fi
+          mvn -B --no-transfer-progress -Dstyle.color=never \
+            org.owasp:dependency-check-maven:13.0.0:check "${ARGS[@]}"
 
       - name: Upload dependency scan results
         uses: actions/upload-artifact@v4
@@ -93,8 +111,9 @@ jobs:
         with:
           name: dependency-scan-results
           path: |
-            dependency-check-report.json
-            dependency-check-report.html
+            target/dependency-check-report.json
+            target/dependency-check-report.html
+          if-no-files-found: warn
           retention-days: 30
 
   vulnerability-alert:
@@ -106,13 +125,28 @@ jobs:
       issues: write
     
     steps:
+      - name: Download dependency scan results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: dependency-scan-results
+          path: .
+
       - name: Check for vulnerabilities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # Check if any high/critical vulnerabilities were found
           if [ -f "dependency-check-report.json" ]; then
-            HIGH_COUNT=$(jq '.dependencies[] | select(.vulnerabilities[] | select(.severity == "High" or .severity == "Critical")) | length' dependency-check-report.json 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.dependencies[]? | .vulnerabilities[]? | select((.severity // "" | ascii_upcase) as $s | $s == "HIGH" or $s == "CRITICAL")] | length' dependency-check-report.json || echo "0")
             if [ "$HIGH_COUNT" -gt 0 ]; then
               echo "⚠️  Found $HIGH_COUNT high/critical vulnerabilities"
+              OPEN_ALERTS=$(gh issue list --state open --search 'Security Vulnerability Alert in:title' --json number --jq 'length' 2>/dev/null || echo "0")
+              if [ "$OPEN_ALERTS" -gt 0 ]; then
+                echo "An open vulnerability alert issue already exists - skipping creation"
+                exit 0
+              fi
               echo "Creating GitHub issue..."
               
               # Create issue body
@@ -126,4 +160,6 @@ jobs:
             else
               echo "✅ No high/critical vulnerabilities detected"
             fi
+          else
+            echo "No dependency-check report found (dependency-scan produced no artifact)"
           fi

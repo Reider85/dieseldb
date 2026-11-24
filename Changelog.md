@@ -1135,3 +1135,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.9 @Isolated EvictionUnderPinnedHeadTest - wall-clock ratio proof red under 4-way class parallelism (4ms vs 19ms baseline, 4.75x > 3.0x); green isolated, assertion unchanged per AGENTS known-flakes rule
 
 3.5.10 AuditLogger: gate first consumer retention from construction time - lastRetentionMs=0 made the consumer's first loop iteration run retention immediately, racing (and beating after the poll fix) a synchronous runRetentionForTest; interval semantics unchanged, interval=0 still every pass
+
+3.5.11 Fix Security Scanning: dependency-scan via dependency-check-maven 13.0.0 (NVD API 2.0, NVD data cache) replacing the dead 8.2.1 zip install; Vulnerability Alert now downloads the report artifact, passes GH_TOKEN/GH_REPO, counts HIGH/CRITICAL correctly and dedups issues
