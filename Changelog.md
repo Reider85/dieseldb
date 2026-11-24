@@ -1101,3 +1101,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.92 Implement multi-page catalog support to remove ~40-table limit and enable page-backed catalog in production
 
 3.4.93 Implement SAVEPOINT functionality with comprehensive testing
+
+3.4.94 Fix Security Scanning: dependency-scan via dependency-check-maven 13.0.0 (NVD API 2.0, NVD data cache) replacing the dead 8.2.1 zip install; Vulnerability Alert now downloads the report artifact, passes GH_TOKEN/GH_REPO, counts HIGH/CRITICAL correctly and dedups issues
