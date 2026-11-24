@@ -59,11 +59,7 @@ jobs:
           echo "==== last 80 lines of Maven log ===="
           tail -n 50 compile.log || true
           echo "==== compilation errors ===="
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
           grep -E 'COMPILATION ERROR|ERROR.*\.java' compile.log | head -n 50 || true
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
 
       - name: Build summary
         if: always()
@@ -253,8 +249,6 @@ jobs:
   # for that file and PRs/pushes would merge without verification.
   # DEVIATION (prompt 1, GITHUB.md): hard failure only on pull_request; on
   # push it degrades to a warning (continue-on-error) so mapping drift never
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
   # turns the push badge red again.
   lint-tia-mapping:
     name: tia-mapping-drift
@@ -271,8 +265,6 @@ jobs:
       - name: Verify tia-mapping.txt covers all diesel sources (warning on push)
         if: github.event_name == 'push'
         continue-on-error: true
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
         run: ./scripts/check-tia-mapping.sh
 
   # ──────── PR gate: heavier profiles only on pull_request ────────
@@ -316,8 +308,6 @@ jobs:
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
           if [ "$cls_count" -gt "$src_count" ]; then
             echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
           fi
           echo "No orphaned .class files found."
 
@@ -397,8 +387,6 @@ jobs:
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
           if [ "$cls_count" -gt "$src_count" ]; then
             echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
           fi
           echo "No orphaned .class files found."
 
@@ -435,8 +423,6 @@ jobs:
     timeout-minutes: 30
     if: github.event_name == 'schedule'
     continue-on-error: ${{ matrix.os == 'macos-13' }}
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
     env:
       MAVEN_OPTS: -Xmx2g -XX:+UseG1GC
     strategy:
@@ -610,8 +596,6 @@ jobs:
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
           if [ "$cls_count" -gt "$src_count" ]; then
             echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
           fi
           echo "No orphaned .class files found."
 
@@ -677,8 +661,6 @@ jobs:
           cls_count=$(find target/test-classes -name '*.class' 2>/dev/null | wc -l)
           if [ "$cls_count" -gt "$src_count" ]; then
             echo "ERROR: orphaned test .class files (deleted .java left .class behind)"; exit 1
-          echo "==== tests that started but never finished ===="
-          grep -E "^Running " test.log | tail -n 20 || true
           fi
           echo "No orphaned .class files found."
 

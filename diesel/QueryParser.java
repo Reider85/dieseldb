@@ -365,7 +365,7 @@ class QueryParser {
                 return notPrefix() + column + MessageConstants.SQL_IN_SPACED + subQuery.toString() + conjunctionSuffix();
             }
             String valuesStr = inValues.stream()
-                    .map(v -> v instanceof String ? "'" + v + "'" : v.toString())
+                    .map(v -> v == null ? SqlKeywords.NULL : v instanceof String ? "'" + v + "'" : v.toString())
                     .collect(Collectors.joining(", "));
             return notPrefix() + column + MessageConstants.SQL_IN_SPACED + "(" + valuesStr + ")" + conjunctionSuffix();
         }
