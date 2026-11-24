@@ -128,7 +128,10 @@ class ConditionEvaluator {
      * the PROFL column.
      */
     private Object resolveRowValue(Map<String, Object> row, String columnKey, JsonParserConfig config) {
-        LOGGER.info("ConditionEvaluator.resolveRowValue called with columnKey: {}, nested mode: {}",
+        // DEBUG, not INFO: this runs once PER ROW of every scan (a 600-row
+        // table x N conditions = thousands of lines). The INFO flood saturated
+        // the CI runner's log stream and froze every thread that logs.
+        LOGGER.debug("ConditionEvaluator.resolveRowValue called with columnKey: {}, nested mode: {}",
                 new Object[]{columnKey, config.nestedMode()});
         Object direct = row.get(columnKey);
         if (direct != null) {
@@ -149,7 +152,7 @@ class ConditionEvaluator {
             if (resolved.columnIndex() >= 0 && !resolved.segments().isEmpty()) {
                 Object baseValue = row.get(resolved.column());
                 if (baseValue instanceof String jsonText) {
-                    LOGGER.info("ConditionExtractor calling JsonPathResolver.extract with segments: {}, nested mode: {}",
+                    LOGGER.debug("ConditionExtractor calling JsonPathResolver.extract with segments: {}, nested mode: {}",
                             new Object[]{resolved.segments(), config.nestedMode()});
                     return JsonPathResolver.extract(jsonText, resolved.segments(), config);
                 }

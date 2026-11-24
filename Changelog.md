@@ -1117,3 +1117,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.0 Fix CI blockers: exec bit on assert-tests-ran.sh/local-test-runner.sh (126 on every ci.yml fast run) + PersistenceTest closes tracked Databases before cleanup (unclosed persist-flusher resurrected ./PERSIST_TEST.* after delete)
 
 3.5.1 TEMP DIAGNOSTIC v2: quiet stdout (mvn to file only) + liveness-polling watchdog so the thread dump cannot be wedged behind log flood
+
+3.5.2 Fix ci.yml fast-job 60-min hang: ConditionEvaluator per-row INFO flood (44% of test log) -> DEBUG; run mvn file-only with a milestone tail so a runner log-stream stall can never back-pressure System.out and freeze every logging thread
