@@ -116,21 +116,6 @@ jobs:
           MVN_PID=$!
           tail -n +1 -f --pid=$MVN_PID test.log | grep --line-buffered -E "\[INFO\] Running |Tests run:|BUILD SUCCESS|BUILD FAILURE" &
           TAIL_PID=$!
-          # TEMP DIAGNOSTIC (revert after root-causing the audit-lock hang):
-          # if mvn is still alive at +180/360/540s, thread-dump every JVM to
-          # the job log - dump only, never kill, so a healthy-but-slow run
-          # still finishes and a hung run leaves stacks behind.
-          for i in 1 2 3; do
-            sleep 180
-            if ! kill -0 $MVN_PID 2>/dev/null; then break; fi
-            echo "==== THREAD DUMP #$i at +$((i * 180))s (mvn still running) ===="
-            jcmd -l 2>&1 || true
-            for pid in $(jcmd -l 2>/dev/null | awk '{print $1}'); do
-              echo "==== Thread.print pid=$pid ===="
-              jcmd "$pid" Thread.print 2>&1 || true
-            done
-            echo "==== END DUMP #$i ===="
-          done
           MVN_EXIT=0
           wait $MVN_PID || MVN_EXIT=$?
           kill $TAIL_PID 2>/dev/null || true
