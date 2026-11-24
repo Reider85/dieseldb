@@ -1107,3 +1107,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.95 Move PITest from test phase to mutation profile; add CI-log triage guidance to AGENTS.md
 
 3.4.96 Fix CI test isolation: drop-before-create for static @TempDir classes, start logback appender
+
+3.4.97 Fix remaining CI failures: repair ci.yml YAML corruption from 8bb7f2a, remove invalid diagnostic-section.yml fragment, isolate AvroDeleteIsOLogNTest wall-clock test, null-safe IN-list condition formatting

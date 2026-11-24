@@ -2,6 +2,7 @@ package diesel.storage.avro;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 import java.util.List;
 import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
@@ -9,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Test for Avro-11: Delete with tombstones and compaction
  */
+@Isolated  // wall-clock timing assertion in testDeletePerformance starves under parallel-class CPU contention
 @Tag("storage")
 @Tag("avro")
 public class AvroDeleteIsOLogNTest {

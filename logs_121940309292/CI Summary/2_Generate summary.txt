@@ -1,0 +1,26 @@
+﻿2026-11-22T19:16:03.7696456Z ##[group]Run echo "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY
+2026-11-22T19:16:03.7697342Z [36;1mecho "# Hybrid CI/CD Summary" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7698002Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7698579Z [36;1mecho "| Job | Status | Mode |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7699208Z [36;1mecho "|---|---|---|" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7699867Z [36;1mecho "| Check Limits | success | Auto-detect |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7700612Z [36;1mecho "| GitHub CI | failure | GitHub |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7701289Z [36;1mecho "| Local CI | skipped | Skipped |" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7701906Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7702449Z [36;1mecho "## CI Mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7703047Z [36;1mecho "- Mode: GitHub Actions" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7703598Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7704198Z [36;1mecho "## Test Results" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7704860Z [36;1mecho "- Coverage reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7705901Z [36;1mecho "- Test reports: Available in artifacts" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7706543Z [36;1mecho "" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7707050Z [36;1mecho "## Next Steps" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7707795Z [36;1mif [ "false" = "true" ]; then[0m
+2026-11-22T19:16:03.7708512Z [36;1m  echo "- ⚠️  Running in local fallback mode due to GitHub limits" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7709414Z [36;1m  echo "- 🔄 Full GitHub CI will resume when capacity is available" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7710074Z [36;1melse[0m
+2026-11-22T19:16:03.7710557Z [36;1m  echo "- ✅ Running in normal GitHub CI mode" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7711341Z [36;1m  echo "- 📊 Full test coverage and security scanning active" >> $GITHUB_STEP_SUMMARY[0m
+2026-11-22T19:16:03.7712001Z [36;1mfi[0m
+2026-11-22T19:16:05.6623405Z shell: /usr/bin/bash -e {0}
+2026-11-22T19:16:05.6624169Z ##[endgroup]
