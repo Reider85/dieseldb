@@ -100,7 +100,10 @@ jobs:
           set -euo pipefail
           ARGS=(
             -DdataDirectory="$HOME/.dependency-check-data"
-            -Dformat=HTML,JSON
+            # 'formats' (String[]) splits the comma list; the singular
+            # 'format' is taken verbatim and would look up a template
+            # named "HTML,JSON.vsl" and fail.
+            -Dformats=HTML,JSON
             -DfailBuildOnCVSS=11
           )
           if [ -n "${NVD_API_KEY:-}" ]; then
