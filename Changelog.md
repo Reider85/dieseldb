@@ -1113,3 +1113,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.98 Remove accidentally committed CI log dump (logs_121940309292) and ignore log archives
 
 3.4.99 TEMP DIAGNOSTIC: thread-dump watchdog for ci.yml fast job hang (revert after root cause)
+
+3.5.0 Fix CI blockers: exec bit on assert-tests-ran.sh/local-test-runner.sh (126 on every ci.yml fast run) + PersistenceTest closes tracked Databases before cleanup (unclosed persist-flusher resurrected ./PERSIST_TEST.* after delete)

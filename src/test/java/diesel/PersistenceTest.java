@@ -16,6 +16,7 @@ import java.io.ObjectOutputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -33,6 +34,21 @@ public class PersistenceTest {
     private static final String TABLE = "PERSIST_TEST";
     private String prevCsvCodec;
     private String prevTsvCodec;
+    /** Every Database opened on the CWD - closed in tearDown before cleanup(). */
+    private final List<Database> openDatabases = new ArrayList<>();
+
+    /**
+     * Opens a Database on the CWD and tracks it so tearDown can close it
+     * before cleanup(): an unclosed Database keeps its persist-flusher alive,
+     * which rewrites ./PERSIST_TEST.* AFTER cleanup deleted them - the next
+     * test then reloads the resurrected table and createTable throws
+     * "Table PERSIST_TEST already exists" (Database.close() hard rule).
+     */
+    private Database openDb() {
+        Database db = new Database(".");
+        openDatabases.add(db);
+        return db;
+    }
 
     @BeforeEach
     void setUp() {
@@ -45,6 +61,14 @@ public class PersistenceTest {
 
     @AfterEach
     void tearDown() {
+        for (Database db : openDatabases) {
+            try {
+                db.close();
+            } catch (RuntimeException e) {
+                // best-effort: a failed close must not mask the test result
+            }
+        }
+        openDatabases.clear();
         cleanup();
         if (prevCsvCodec == null) {
             System.clearProperty("csv.compression.codec");
@@ -94,7 +118,7 @@ public class PersistenceTest {
     @Test
     void testSaveAndLoadRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testSaveAndLoadRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, USER_SCORE LONG, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) VALUES ('Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', 1000000, 123.45, 99.75, 123456.789012, 'A', '123e4567-e89b-12d3-a456-426614174000')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) VALUES ('Bob', 30, FALSE, '1993-08-15', '2023-10-16 09:00:00', 2000000, 678.90, 88.50, 987654.321098, 'B', '550e8400-e29b-41d4-a716-446655440000')", null);
@@ -107,7 +131,7 @@ public class PersistenceTest {
         }
         assertTrue(db.getTable(TABLE).isFileInitialized(), "Table marked as initialized after save");
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded from file via loadFromFile");
         if (loaded == null) {
@@ -127,12 +151,12 @@ public class PersistenceTest {
     @Test
     void testSchemaAndTypesPreserved() {
         LOGGER.log(Level.INFO, "Starting test: testSchemaAndTypesPreserved");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING, AGE INTEGER, ACTIVE BOOLEAN, BIRTHDATE DATE, LAST_LOGIN DATETIME, USER_SCORE LONG, BALANCE BIGDECIMAL, SCORE FLOAT, PRECISION DOUBLE, INITIAL CHAR, SESSION_ID UUID)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME, AGE, ACTIVE, BIRTHDATE, LAST_LOGIN, USER_SCORE, BALANCE, SCORE, PRECISION, INITIAL, SESSION_ID) VALUES ('Alice', 25, TRUE, '1998-05-20', '2023-10-15 14:30:00', 1000000, 123.45, 99.75, 123456.789012, 'A', '123e4567-e89b-12d3-a456-426614174000')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
 
@@ -175,13 +199,13 @@ public class PersistenceTest {
     @Test
     void testSequenceContinuesAfterLoad() {
         LOGGER.log(Level.INFO, "Starting test: testSequenceContinuesAfterLoad");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Alice')", null);
         db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('Bob')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
         assertEquals(2, table.getRows().size(), "Rows preserved before sequence continuation");
@@ -196,7 +220,7 @@ public class PersistenceTest {
     @Test
     void testIndexesFunctionalAfterLoad() {
         LOGGER.log(Level.INFO, "Starting test: testIndexesFunctionalAfterLoad");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
         db.executeQuery("CREATE HASH INDEX ON " + TABLE + " (NAME)", null);
@@ -205,7 +229,7 @@ public class PersistenceTest {
         }
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
 
@@ -243,7 +267,7 @@ public class PersistenceTest {
     @Test
     void testCompositeIndexFunctionalAfterLoad() {
         LOGGER.log(Level.INFO, "Starting test: testCompositeIndexFunctionalAfterLoad");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, CITY STRING)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (NAME, AGE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID1', 'Alice', 25, 'NYC')", null);
@@ -252,7 +276,7 @@ public class PersistenceTest {
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID4', 'Carol', 25, 'SF')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
 
@@ -277,7 +301,7 @@ public class PersistenceTest {
     @Test
     void testCoveringIndexFunctionalAfterLoad() {
         LOGGER.log(Level.INFO, "Starting test: testCoveringIndexFunctionalAfterLoad");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, SALARY DOUBLE)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE) COVERING (NAME, SALARY)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID1', 'Alice', 25, 50000.0)", null);
@@ -285,7 +309,7 @@ public class PersistenceTest {
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID3', 'Carol', 25, 55000.0)", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE);
 
@@ -312,13 +336,13 @@ public class PersistenceTest {
     @Test
     void testLoadTablesFromDisk() {
         LOGGER.log(Level.INFO, "Starting test: testLoadTablesFromDisk");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + "2 (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("INSERT INTO " + TABLE + "2 (ID, NAME, AGE) VALUES ('A1', 'Alpha', 10)", null);
         db.executeQuery("INSERT INTO " + TABLE + "2 (ID, NAME, AGE) VALUES ('A2', 'Beta', 20)", null);
         db.saveTablesToDisk();
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         reloaded.loadTablesFromDisk();
         Table table = reloaded.getTable(TABLE + "2");
         assertEquals(2, table.getRows().size(), "Database.loadTablesFromDisk loads tables into new Database");
@@ -330,7 +354,7 @@ public class PersistenceTest {
     @Test
     void testDropTableDeletesFiles() {
         LOGGER.log(Level.INFO, "Starting test: testDropTableDeletesFiles");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
@@ -355,7 +379,7 @@ public class PersistenceTest {
         try {
             System.setProperty("csv.compression.codec", "zstd");
             System.setProperty("tsv.compression.codec", "zstd");
-            Database db = new Database(".");
+            Database db = openDb();
             db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
             db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME) VALUES ('X1', 'Xray')", null);
             db.getTable(TABLE).saveToSerializedFile(TABLE);
@@ -395,7 +419,7 @@ public class PersistenceTest {
     @Test
     void testBTreeIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testBTreeIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
         for (int i = 1; i <= 20; i++) {
@@ -403,7 +427,7 @@ public class PersistenceTest {
         }
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index present after load");
@@ -417,7 +441,7 @@ public class PersistenceTest {
     @Test
     void testHashIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testHashIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("CREATE HASH INDEX ON " + TABLE + " (NAME)", null);
         for (int i = 1; i <= 20; i++) {
@@ -425,7 +449,7 @@ public class PersistenceTest {
         }
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.getIndexes().containsKey("NAME"), "Hash index present after load");
@@ -438,7 +462,7 @@ public class PersistenceTest {
     @Test
     void testUniqueIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testUniqueIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING)", null);
         db.executeQuery("CREATE UNIQUE INDEX ON " + TABLE + " (NAME)", null);
         for (int i = 1; i <= 10; i++) {
@@ -446,7 +470,7 @@ public class PersistenceTest {
         }
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.getIndexes().containsKey("NAME"), "Unique index present after load");
@@ -459,7 +483,7 @@ public class PersistenceTest {
     @Test
     void testCompositeIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testCompositeIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, CITY STRING)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (NAME, AGE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID1', 'Alice', 25, 'NYC')", null);
@@ -467,7 +491,7 @@ public class PersistenceTest {
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, CITY) VALUES ('ID3', 'Alice', 30, 'NYC')", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.getIndexes().containsKey("NAME+AGE"), "Composite index present after load");
@@ -480,14 +504,14 @@ public class PersistenceTest {
     @Test
     void testCoveringIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testCoveringIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER, SALARY DOUBLE)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE) COVERING (NAME, SALARY)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID1', 'Alice', 25, 50000.0)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE, SALARY) VALUES ('ID2', 'Bob', 30, 60000.0)", null);
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.getIndexes().containsKey("AGE"), "Covering index present after load");
@@ -500,14 +524,14 @@ public class PersistenceTest {
     @Test
     void testClusteredIndexSerializedRoundTrip() {
         LOGGER.log(Level.INFO, "Starting test: testClusteredIndexSerializedRoundTrip");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID LONG PRIMARY KEY SEQUENCE(id_seq 1 1), NAME STRING)", null);
         for (int i = 1; i <= 20; i++) {
             db.executeQuery("INSERT INTO " + TABLE + " (NAME) VALUES ('User" + i + "')", null);
         }
         db.getTable(TABLE).saveToSerializedFile(TABLE);
 
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded");
         assertTrue(loaded.hasClusteredIndex(), "Clustered index present after load");
@@ -519,7 +543,7 @@ public class PersistenceTest {
     @Test
     void testChecksumFailureTriggersRebuild() {
         LOGGER.log(Level.INFO, "Starting test: testChecksumFailureTriggersRebuild");
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
         db.executeQuery("CREATE HASH INDEX ON " + TABLE + " (NAME)", null);
@@ -547,7 +571,7 @@ public class PersistenceTest {
         }
 
         // Load the corrupted file — should not throw, indexes should be rebuilt from rows.
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded despite corrupted index data");
         assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index rebuilt from rows after checksum failure");
@@ -562,7 +586,7 @@ public class PersistenceTest {
         LOGGER.log(Level.INFO, "Starting test: testBackwardCompatV2File");
         // Simulate a v2 format file (no serialized indexes) by writing a Table
         // with formatVersion=2 and no index data after deletedRows.
-        Database db = new Database(".");
+        Database db = openDb();
         db.executeQuery("CREATE TABLE " + TABLE + " (ID STRING PRIMARY KEY, NAME STRING, AGE INTEGER)", null);
         db.executeQuery("CREATE INDEX ON " + TABLE + " (AGE)", null);
         db.executeQuery("INSERT INTO " + TABLE + " (ID, NAME, AGE) VALUES ('ID1', 'Alice', 25)", null);
@@ -588,7 +612,7 @@ public class PersistenceTest {
         }
 
         // Load — should rebuild indexes from rows (backward compat).
-        Database reloaded = new Database(".");
+        Database reloaded = openDb();
         Table loaded = Table.loadFromFile(reloaded, TABLE);
         assertNotNull(loaded, "Table loaded from v2 format file");
         assertTrue(loaded.getIndexes().containsKey("AGE"), "BTree index rebuilt from rows (v2 compat)");
