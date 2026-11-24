@@ -107,35 +107,19 @@ jobs:
         shell: bash
         run: |
           stamp=$(mktemp)
-          # TEMP DIAGNOSTIC (revert after root-causing the AlterDualWriteTest hang):
-          # mvn output goes to test.log ONLY - no stdout flood, so the watchdog's
-          # one-shot thread dump can never be blocked behind gigabytes of spam.
+          # Full output goes to test.log ONLY; the job log receives just the
+          # milestone lines. A high-volume stdout stream (per-row INFO spam)
+          # can stall the runner's log uploader - the stall then propagates
+          # back through tee/System.out and freezes every logging thread,
+          # which is what hung this job for 60 minutes twice in a row.
+          touch test.log
           mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast > test.log 2>&1 &
           MVN_PID=$!
-          DIAG=0
-          for i in $(seq 1 16); do
-            if ! kill -0 $MVN_PID 2>/dev/null; then break; fi
-            sleep 15
-          done
-          if kill -0 $MVN_PID 2>/dev/null && grep -q "\[INFO\] Running " test.log 2>/dev/null; then
-            DIAG=1
-            echo "==== TEMP DIAGNOSTIC: tests started but still running after 240s ===="
-            jcmd -l 2>&1 || true
-            for pid in $(jcmd -l 2>/dev/null | awk '{print $1}'); do
-              echo "==== Thread.print pid=$pid ===="
-              jcmd "$pid" Thread.print 2>&1 || true
-            done
-            echo "==== END DIAGNOSTIC ===="
-            pkill -f surefirebooter || true
-            pkill -f classworlds || true
-            sleep 3
-          fi
+          tail -n +1 -f --pid=$MVN_PID test.log | grep --line-buffered -E "\[INFO\] Running |Tests run:|BUILD SUCCESS|BUILD FAILURE" &
+          TAIL_PID=$!
           MVN_EXIT=0
           wait $MVN_PID || MVN_EXIT=$?
-          if [ "$DIAG" = "1" ]; then
-            echo "Diagnostic kill issued after hang detection (mvn exit was $MVN_EXIT)."
-            exit 1
-          fi
+          kill $TAIL_PID 2>/dev/null || true
           ./scripts/assert-tests-ran.sh "$stamp"
           exit "$MVN_EXIT"
 
