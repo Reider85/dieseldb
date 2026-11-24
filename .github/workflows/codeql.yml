@@ -76,6 +76,15 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: maven
+          # Own cache namespace: the default key (hash of pom.xml alone) is
+          # shared with the security-scan job, which finishes first and wins
+          # the save race - its cache has no dependency-check-maven plugin, so
+          # every later run re-resolved it from Central and hit HTTP 429.
+          # Including this workflow file also invalidates the cache whenever
+          # the pinned plugin version changes.
+          cache-dependency-path: |
+            pom.xml
+            .github/workflows/codeql.yml
 
       - name: Restore dependency-check NVD data cache
         uses: actions/cache@v4
@@ -114,8 +123,19 @@ jobs:
             # (rate-limited) path is used instead.
             unset NVD_API_KEY
           fi
-          mvn -B --no-transfer-progress -Dstyle.color=never \
-            org.owasp:dependency-check-maven:12.2.2:check "${ARGS[@]}"
+          # Retry: Maven Central rate-limits shared runner IPs (HTTP 429 on
+          # cold-cache plugin resolution).
+          attempt=0
+          until mvn -B --no-transfer-progress -Dstyle.color=never \
+              org.owasp:dependency-check-maven:12.2.2:check "${ARGS[@]}"; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 3 ]; then
+              echo "dependency-check failed after $attempt attempts" >&2
+              exit 1
+            fi
+            echo "dependency-check failed (attempt $attempt) - retrying in 30s"
+            sleep 30
+          done
 
       - name: Upload dependency scan results
         uses: actions/upload-artifact@v4

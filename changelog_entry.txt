@@ -1,1 +1,1 @@
-3.4.97 Fix Security Scanning: use -Dformats=HTML,JSON (String[] param splits on comma) instead of -Dformat (single string -> template HTML,JSON.vsl not found); NVD pull with API key verified green-path in 2m52s
+3.4.98 Fix Security Scanning cache race: security-scan won the setup-java maven cache save (key=hash of pom.xml only) so dependency-scan's cache with the plugin was dropped and every next run re-resolved it from Central -> HTTP 429; give dependency-scan its own cache-dependency-path key and retry mvn up to 3x
