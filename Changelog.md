@@ -1127,3 +1127,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.5 TEMP DIAGNOSTIC: non-killing thread-dump watchdog (+180/360/540s) for the probabilistic audit-lock hang in the fast job (revert after root cause)
 
 3.5.6 Fix dorny reporter for real: fast-glob onlyFiles:true never matches a bare directory pattern - use target/surefire-reports/*.xml (drop the ineffective git-add staging)
+
+3.5.7 Fix AuditLogger consumeLoop lock starvation: poll(100ms) parked WHILE holding writeLock so flushForTest starved in the re-barge gap (CI: AuditTest blocked 29min until job kill; idle local CPUs won the race and hid it) - non-blocking poll inside the lock, park outside it

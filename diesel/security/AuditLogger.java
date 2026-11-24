@@ -15,7 +15,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -213,8 +212,16 @@ public final class AuditLogger {
         List<AuditRecord> batch = new ArrayList<>(64);
         while (running || !queue.isEmpty()) {
             try {
+                boolean idle;
                 synchronized (writeLock) {
-                    AuditRecord first = queue.poll(100, TimeUnit.MILLISECONDS);
+                    // Non-blocking poll INSIDE the lock: the previous
+                    // poll(100ms) parked while holding writeLock, so the
+                    // monitor was held ~100% of every cycle and flushForTest
+                    // starved in the re-barge gap (CI: AuditTest blocked for
+                    // 29+ minutes until the job was killed; local idle CPUs
+                    // won the race, which hid the bug).
+                    AuditRecord first = queue.poll();
+                    idle = first == null;
                     if (first != null) {
                         batch.add(first);
                         queue.drainTo(batch);
@@ -224,6 +231,11 @@ public final class AuditLogger {
                         batch.clear();
                     }
                     maybeRunRetentionLocked();
+                }
+                if (idle) {
+                    // Park OUTSIDE the lock so flushForTest can take it
+                    // immediately; wakeup latency stays <=100ms as before.
+                    Thread.sleep(100);
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
