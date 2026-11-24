@@ -1131,3 +1131,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.7 Fix AuditLogger consumeLoop lock starvation: poll(100ms) parked WHILE holding writeLock so flushForTest starved in the re-barge gap (CI: AuditTest blocked 29min until job kill; idle local CPUs won the race and hid it) - non-blocking poll inside the lock, park outside it
 
 3.5.8 Revert TEMP thread-dump watchdog - audit-lock starvation root-caused and fixed in 85a1cd0 (fast job green in 3m19s)
+
+3.5.9 @Isolated EvictionUnderPinnedHeadTest - wall-clock ratio proof red under 4-way class parallelism (4ms vs 19ms baseline, 4.75x > 3.0x); green isolated, assertion unchanged per AGENTS known-flakes rule
