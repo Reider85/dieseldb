@@ -1123,3 +1123,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.3 Fix fast-suite flakes: VacuumManagerTest per-test data dir via single-step ctor (no-arg ctor bled the shared CWD ./data catalog into VACUUM counts) + close tracking; @Isolated DieselAsyncAppenderTest (wall-clock flush-timeout race under parallel load)
 
 3.5.4 Fix dorny/test-reporter 'No file matches path': stage surefire XMLs (git add -f) before the reporter - it matches against git ls-files and target/ is git-ignored
+
+3.5.5 TEMP DIAGNOSTIC: non-killing thread-dump watchdog (+180/360/540s) for the probabilistic audit-lock hang in the fast job (revert after root cause)
