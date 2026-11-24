@@ -1133,3 +1133,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.8 Revert TEMP thread-dump watchdog - audit-lock starvation root-caused and fixed in 85a1cd0 (fast job green in 3m19s)
 
 3.5.9 @Isolated EvictionUnderPinnedHeadTest - wall-clock ratio proof red under 4-way class parallelism (4ms vs 19ms baseline, 4.75x > 3.0x); green isolated, assertion unchanged per AGENTS known-flakes rule
+
+3.5.10 AuditLogger: gate first consumer retention from construction time - lastRetentionMs=0 made the consumer's first loop iteration run retention immediately, racing (and beating after the poll fix) a synchronous runRetentionForTest; interval semantics unchanged, interval=0 still every pass

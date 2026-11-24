@@ -106,6 +106,15 @@ public final class AuditLogger {
         this.retentionIntervalMs = retentionIntervalMs;
         this.archiveDir = Objects.requireNonNull(archiveDir, "archiveDir");
         this.clock = Objects.requireNonNull(clock, "clock");
+        // Gate the first consumer-side retention pass from CREATION time:
+        // with the previous 0 default the consumer's very first loop
+        // iteration ran retention immediately and could beat a synchronous
+        // runRetentionForTest() issued right after construction (the old
+        // parked poll(100ms) accidentally hid the race by delaying that
+        // first iteration). The documented "at most once per retention
+        // interval" semantics are unchanged; interval=0 still means every
+        // pass runs.
+        this.lastRetentionMs = clock.millis();
         this.queue = new ArrayBlockingQueue<>(Math.max(1, queueCapacity));
         if (enabled) {
             this.running = true;
