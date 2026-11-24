@@ -1125,3 +1125,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.4 Fix dorny/test-reporter 'No file matches path': stage surefire XMLs (git add -f) before the reporter - it matches against git ls-files and target/ is git-ignored
 
 3.5.5 TEMP DIAGNOSTIC: non-killing thread-dump watchdog (+180/360/540s) for the probabilistic audit-lock hang in the fast job (revert after root cause)
+
+3.5.6 Fix dorny reporter for real: fast-glob onlyFiles:true never matches a bare directory pattern - use target/surefire-reports/*.xml (drop the ineffective git-add staging)
