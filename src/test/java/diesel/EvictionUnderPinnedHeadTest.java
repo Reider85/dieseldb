@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -42,6 +43,12 @@ import static org.junit.jupiter.api.Assertions.*;
  * EvictionIsO1AmortizedTest) plus a failed-flush restore lifecycle method.
  */
 @Tag("storage")
+// evictionCostIsIndependentOfPinnedHeadSize is a wall-clock ratio proof:
+// under 4-way class parallelism the baseline and pinned measurements saw
+// different CPU loads (4ms vs 19ms = ratio 4.75 > 3.0) and the suite went
+// red. Isolated it is green - same pattern as the other @Isolated
+// wall-clock proofs (AGENTS.md known-flakes: do not relax the assertion).
+@Isolated
 class EvictionUnderPinnedHeadTest {
 
     private static final int PAGE_SIZE = 8192;
