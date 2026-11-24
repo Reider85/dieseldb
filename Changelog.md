@@ -1109,3 +1109,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.96 Fix CI test isolation: drop-before-create for static @TempDir classes, start logback appender
 
 3.4.97 Fix remaining CI failures: repair ci.yml YAML corruption from 8bb7f2a, remove invalid diagnostic-section.yml fragment, isolate AvroDeleteIsOLogNTest wall-clock test, null-safe IN-list condition formatting
+
+3.4.98 Remove accidentally committed CI log dump (logs_121940309292) and ignore log archives
