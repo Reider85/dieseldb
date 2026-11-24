@@ -1107,3 +1107,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.4.95 Fix Security Scanning: unset empty NVD_API_KEY env (missing secret was read as zero-length key -> NvdApiException) so the unauthenticated NVD path is used until the secret is configured
 
 3.4.96 Pin dependency-check-maven to 12.2.2: 13.0.0 regression #8715 (bundled nvd.api.key= empty string aborts keyless runs with NvdApiException length of 0); 12.2.2 verified locally to start the NVD pull without a key
+
+3.4.97 Fix Security Scanning: use -Dformats=HTML,JSON (String[] param splits on comma) instead of -Dformat (single string -> template HTML,JSON.vsl not found); NVD pull with API key verified green-path in 2m52s
