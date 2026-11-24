@@ -101,6 +101,12 @@ jobs:
           )
           if [ -n "${NVD_API_KEY:-}" ]; then
             ARGS+=(-DnvdApiKeyEnvironmentVariable=NVD_API_KEY)
+          else
+            # An empty NVD_API_KEY (secret not configured yet) is read by the
+            # NVD client as a zero-length key and aborts with
+            # "Invalid API Key, length of 0" - drop the variable entirely so
+            # the unauthenticated (rate-limited) path is used instead.
+            unset NVD_API_KEY
           fi
           mvn -B --no-transfer-progress -Dstyle.color=never \
             org.owasp:dependency-check-maven:13.0.0:check "${ARGS[@]}"
