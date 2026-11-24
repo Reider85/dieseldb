@@ -93,6 +93,10 @@ jobs:
           # dependency tree from pom.xml (the old CLI `--scan ./diesel`
           # found zero jars) and pulls NVD data through the NVD API 2.0
           # (the legacy JSON/XML feeds used by 8.2.1 are gone).
+          # Pinned to 12.2.2: 13.0.0 ships `nvd.api.key=` (empty) in its
+          # bundled properties, which is passed to the client as a
+          # zero-length key and aborts every keyless run
+          # (dependency-check/DependencyCheck#8715, fixed on main only).
           set -euo pipefail
           ARGS=(
             -DdataDirectory="$HOME/.dependency-check-data"
@@ -102,14 +106,13 @@ jobs:
           if [ -n "${NVD_API_KEY:-}" ]; then
             ARGS+=(-DnvdApiKeyEnvironmentVariable=NVD_API_KEY)
           else
-            # An empty NVD_API_KEY (secret not configured yet) is read by the
-            # NVD client as a zero-length key and aborts with
-            # "Invalid API Key, length of 0" - drop the variable entirely so
-            # the unauthenticated (rate-limited) path is used instead.
+            # An empty NVD_API_KEY (secret not configured yet) must not be
+            # visible to the NVD client - drop it so the unauthenticated
+            # (rate-limited) path is used instead.
             unset NVD_API_KEY
           fi
           mvn -B --no-transfer-progress -Dstyle.color=never \
-            org.owasp:dependency-check-maven:13.0.0:check "${ARGS[@]}"
+            org.owasp:dependency-check-maven:12.2.2:check "${ARGS[@]}"
 
       - name: Upload dependency scan results
         uses: actions/upload-artifact@v4

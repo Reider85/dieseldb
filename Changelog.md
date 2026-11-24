@@ -1139,3 +1139,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.11 Fix Security Scanning: dependency-scan via dependency-check-maven 13.0.0 (NVD API 2.0, NVD data cache) replacing the dead 8.2.1 zip install; Vulnerability Alert now downloads the report artifact, passes GH_TOKEN/GH_REPO, counts HIGH/CRITICAL correctly and dedups issues
 
 3.5.12 Fix Security Scanning: unset empty NVD_API_KEY env (missing secret was read as zero-length key -> NvdApiException) so the unauthenticated NVD path is used until the secret is configured
+
+3.5.13 Pin dependency-check-maven to 12.2.2: 13.0.0 regression #8715 (bundled nvd.api.key= empty string aborts keyless runs with NvdApiException length of 0); 12.2.2 verified locally to start the NVD pull without a key
