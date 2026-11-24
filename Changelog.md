@@ -1137,3 +1137,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.10 AuditLogger: gate first consumer retention from construction time - lastRetentionMs=0 made the consumer's first loop iteration run retention immediately, racing (and beating after the poll fix) a synchronous runRetentionForTest; interval semantics unchanged, interval=0 still every pass
 
 3.5.11 Fix Security Scanning: dependency-scan via dependency-check-maven 13.0.0 (NVD API 2.0, NVD data cache) replacing the dead 8.2.1 zip install; Vulnerability Alert now downloads the report artifact, passes GH_TOKEN/GH_REPO, counts HIGH/CRITICAL correctly and dedups issues
+
+3.5.12 Fix Security Scanning: unset empty NVD_API_KEY env (missing secret was read as zero-length key -> NvdApiException) so the unauthenticated NVD path is used until the secret is configured
