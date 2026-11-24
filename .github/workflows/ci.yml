@@ -170,6 +170,14 @@ jobs:
           echo "- Coverage: Available in artifacts" >> $GITHUB_STEP_SUMMARY
           echo "- Security: CodeQL scanning available" >> $GITHUB_STEP_SUMMARY
 
+      - name: Stage surefire XMLs for the test reporter
+        if: success() || failure()
+        # dorny/test-reporter matches paths against `git ls-files`; target/ is
+        # git-ignored, so without this the reporter finds no files and fails
+        # with "No file matches path" even though the XMLs exist on disk.
+        # Only *.xml are staged: java-junit must not see .dump/.txt files.
+        run: git add -f target/surefire-reports/*.xml || true
+
       - name: Upload test results to PR checks
         uses: dorny/test-reporter@v1
         if: success() || failure()

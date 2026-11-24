@@ -1121,3 +1121,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.2 Fix ci.yml fast-job 60-min hang: ConditionEvaluator per-row INFO flood (44% of test log) -> DEBUG; run mvn file-only with a milestone tail so a runner log-stream stall can never back-pressure System.out and freeze every logging thread
 
 3.5.3 Fix fast-suite flakes: VacuumManagerTest per-test data dir via single-step ctor (no-arg ctor bled the shared CWD ./data catalog into VACUUM counts) + close tracking; @Isolated DieselAsyncAppenderTest (wall-clock flush-timeout race under parallel load)
+
+3.5.4 Fix dorny/test-reporter 'No file matches path': stage surefire XMLs (git add -f) before the reporter - it matches against git ls-files and target/ is git-ignored
