@@ -108,29 +108,30 @@ jobs:
         run: |
           stamp=$(mktemp)
           # TEMP DIAGNOSTIC (revert after root-causing the AlterDualWriteTest hang):
-          # run mvn in the background so a watchdog can thread-dump every JVM if
-          # the suite is still alive long after its normal ~40-180s duration.
-          ( mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast; echo $? > target/mvn-exit-code ) 2>&1 | tee test.log &
-          BG=$!
+          # mvn output goes to test.log ONLY - no stdout flood, so the watchdog's
+          # one-shot thread dump can never be blocked behind gigabytes of spam.
+          mvn -B -T 4 --no-transfer-progress -Dstyle.color=never -Dmaven.test.failure.ignore=false test -P fast > test.log 2>&1 &
+          MVN_PID=$!
           DIAG=0
-          sleep 240
-          if kill -0 $BG 2>/dev/null && grep -q "\[INFO\] Running " test.log 2>/dev/null; then
+          for i in $(seq 1 16); do
+            if ! kill -0 $MVN_PID 2>/dev/null; then break; fi
+            sleep 15
+          done
+          if kill -0 $MVN_PID 2>/dev/null && grep -q "\[INFO\] Running " test.log 2>/dev/null; then
             DIAG=1
-            {
-              echo "==== TEMP DIAGNOSTIC: tests started but still running after 240s ===="
-              jcmd -l 2>&1 || true
-              for pid in $(jcmd -l 2>/dev/null | awk '{print $1}'); do
-                echo "==== Thread.print pid=$pid ===="
-                jcmd "$pid" Thread.print 2>&1 || true
-              done
-              echo "==== END DIAGNOSTIC ===="
-            } | tee -a test.log
+            echo "==== TEMP DIAGNOSTIC: tests started but still running after 240s ===="
+            jcmd -l 2>&1 || true
+            for pid in $(jcmd -l 2>/dev/null | awk '{print $1}'); do
+              echo "==== Thread.print pid=$pid ===="
+              jcmd "$pid" Thread.print 2>&1 || true
+            done
+            echo "==== END DIAGNOSTIC ===="
             pkill -f surefirebooter || true
             pkill -f classworlds || true
             sleep 3
           fi
-          wait $BG || true
-          MVN_EXIT=$(cat target/mvn-exit-code 2>/dev/null || echo 1)
+          MVN_EXIT=0
+          wait $MVN_PID || MVN_EXIT=$?
           if [ "$DIAG" = "1" ]; then
             echo "Diagnostic kill issued after hang detection (mvn exit was $MVN_EXIT)."
             exit 1
