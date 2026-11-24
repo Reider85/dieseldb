@@ -39,3 +39,6 @@ timing/*
 
 # Maven Versions Plugin backup file (mvn versions:set)
 pom.xml.versionsBackup
+
+logs_*/
+logs_*.zip
