@@ -8,6 +8,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.parallel.Isolated;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +34,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 // Mutates the shared root logger (levels, appenders) - must not run
 // concurrently with DieselLogConfigTest (TESTS-3 parallel-race rule).
 @ResourceLock("logback-state")
+// metricsRegistryExposesDroppedCount is a wall-clock race: if the test thread
+// is descheduled between enqueueing the 10MB event and stop(), the worker
+// drains the queue first and no flush-timeout discard status is emitted.
+// Under 4-way class parallelism that happens in the full suite; isolated it
+// always passes (same pattern as the other @Isolated wall-clock proofs).
+@Isolated
 class DieselAsyncAppenderTest {
     
     private LoggerContext loggerContext;

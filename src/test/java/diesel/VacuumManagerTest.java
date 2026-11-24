@@ -35,9 +35,21 @@ class VacuumManagerTest {
     static Path tempDir;
 
     private static int tableSeq = 0;
+    private static int dbSeq = 0;
+
+    /** Databases opened by the current test method - closed in @AfterEach. */
+    private final List<Database> openDatabases = new ArrayList<>();
 
     @AfterEach
     void clearProperties() {
+        for (Database db : openDatabases) {
+            try {
+                db.close();
+            } catch (RuntimeException e) {
+                // best-effort: a failed close must not mask the test result
+            }
+        }
+        openDatabases.clear();
         System.clearProperty(VacuumManager.INTERVAL_PROPERTY);
         System.clearProperty(VacuumManager.BATCH_SIZE_PROPERTY);
     }
@@ -222,9 +234,17 @@ class VacuumManagerTest {
 
     // ─── Helpers ────────────────────────────────────────────────────
 
-    private static Database newDatabase() {
-        Database db = new Database();
-        db.setDataDir(tempDir.toString());
+    /**
+     * Each call gets its own subdirectory via the single-step constructor:
+     * the no-arg {@code new Database()} loads the SHARED CWD ./data/pages.db
+     * catalog before setDataDir rebinds, so tables registered there by other
+     * parallel classes bleed into this instance - VACUUM then reported
+     * "3 table(s)" instead of this test's 2. The Database is registered for
+     * the @AfterEach close (Database.close() hard rule).
+     */
+    private Database newDatabase() {
+        Database db = new Database(tempDir.resolve("db" + (++dbSeq)).toString());
+        openDatabases.add(db);
         return db;
     }
 
