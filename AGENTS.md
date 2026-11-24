@@ -84,9 +84,9 @@ Skip `make timing` and `make check-profile` for non-performance changes.
    **Known failure signatures** (fix mechanically, don't re-derive from scratch):
    | Signature in log | Root cause | Fix |
    |---|---|---|
-   | `Table X already exists` in query-full tests | `static @TempDir` shared by all methods of a class + `new Database(dir)` (since c187be1) loads tables persisted by the previous method | drop-before-create in `setUp()` — pattern in `JoinTest.dropTables()` / `LazyDeleteTest` |
+   | `Table X already exists` in query-full tests | `static @TempDir` shared by all methods of a class + `new Database(dir)` (since 2b6fc2d) loads tables persisted by the previous method | drop-before-create in `setUp()` — pattern in `JoinTest.dropTables()` / `LazyDeleteTest` |
    | `LOGBACK: No context given for ...$1` | anonymous logback `AppenderBase` added via `addAppender` without `setContext`/`start` → events silently dropped | `appender.setContext(logger.getContext()); appender.start()` before add, `stop()` in finally (`MaxResultRowsTest`) |
-   | `NoSuchFileException: data/pages.db` | two-step `new Database(); setDataDir(...)` init | single-step `new Database(dir)` ctor (commit c187be1) |
+   | `NoSuchFileException: data/pages.db` | two-step `new Database(); setDataDir(...)` init | single-step `new Database(dir)` ctor (commit 2b6fc2d) |
 
 **Compaction discipline:** keep the fix state (failing classes → root cause → fix
 status) in the todo list / a short notes file and re-read ONLY that after a context
