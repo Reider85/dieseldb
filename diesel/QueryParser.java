@@ -8,6 +8,9 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import diesel.CreateTableQuery;
+import diesel.partition.PartitionManager;
+import diesel.PartitionInfo;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.slf4j.Logger;
@@ -100,6 +103,17 @@ class QueryParser {
             "(?i)^DROP\\s+PUBLICATION\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern DROP_SUBSCRIPTION_PATTERN = Pattern.compile(
             "(?i)^DROP\\s+SUBSCRIPTION\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
+    
+    // Partition syntax patterns
+    private static final Pattern PARTITION_BY_PATTERN = Pattern.compile(
+            "(?i)PARTITION\\s+BY\\s+(RANGE|LIST|HASH)\\s*\\(\\s*(" + IDENTIFIER_PATTERN + ")\\s*\\)");
+    private static final Pattern PARTITION_OF_PATTERN = Pattern.compile(
+            "(?i)\\bPARTITION\\s+OF\\s+(" + IDENTIFIER_PATTERN + ")\\s+FOR\\s+VALUES\\s+(RANGE|LIST|HASH)\\s*\\(([^)]+)\\)\\s*$");
+    private static final Pattern PARTITION_DEFAULT_PATTERN = Pattern.compile(
+            "(?i)\\bPARTITION\\s+OF\\s+(" + IDENTIFIER_PATTERN + ")\\s+DEFAULT\\s*$");
+    private static final Pattern CREATE_PARTITIONED_TABLE_PATTERN = Pattern.compile(
+            "CREATE\\s+TABLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*PARTITION\\s+BY\\s+(RANGE|LIST|HASH)\\s*\\(\\s*(" + IDENTIFIER_PATTERN + ")\\s*\\)", Pattern.CASE_INSENSITIVE);
+    
     private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
     private static final Pattern REVOKE_PRIVILEGE_PATTERN = Pattern.compile(
@@ -1899,6 +1913,31 @@ class QueryParser {
     }
 
     private Query<Void> parseCreateTableQuery(String original) {
+        // Check if this is a partitioned table
+        Matcher partitionMatcher = CREATE_PARTITIONED_TABLE_PATTERN.matcher(original);
+        boolean isPartitioned = partitionMatcher.find();
+        System.out.println("DEBUG: Checking if query is partitioned: " + original);
+        System.out.println("DEBUG: Pattern matches: " + isPartitioned);
+        
+        if (isPartitioned) {
+            System.out.println("DEBUG: Found partitioned table with groups: " + partitionMatcher.group(1) + ", " + partitionMatcher.group(2) + ", " + partitionMatcher.group(3));
+            try {
+                Query<Void> result = parseCreatePartitionedTableQuery(original);
+                System.out.println("DEBUG: parseCreatePartitionedTableQuery returned: " + result);
+                return result;
+            } catch (Exception e) {
+                System.out.println("DEBUG: parseCreatePartitionedTableQuery failed with exception: " + e.getMessage());
+                e.printStackTrace();
+                // Fall back to regular table creation
+                return parseCreateRegularTableQuery(original);
+            }
+        }
+        
+        // Regular table creation
+        return parseCreateRegularTableQuery(original);
+    }
+    
+    private Query<Void> parseCreateRegularTableQuery(String original) {
         int firstParen = original.indexOf('(');
         int lastParen = original.lastIndexOf(')');
         if (firstParen == -1 || lastParen == -1 || lastParen < firstParen) {
@@ -1947,6 +1986,122 @@ class QueryParser {
 
         return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences, columnCollations);
     }
+    
+    private Query<Void> parseCreatePartitionedTableQuery(String original) {
+        int firstParen = original.indexOf('(');
+        if (firstParen == -1) {
+            throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing opening parenthesis");
+        }
+        
+        // Find the matching closing parenthesis for the table definition
+        int parenCount = 1;
+        int lastParen = firstParen + 1;
+        while (lastParen < original.length() && parenCount > 0) {
+            char c = original.charAt(lastParen);
+            if (c == '(') {
+                parenCount++;
+            } else if (c == ')') {
+                parenCount--;
+            }
+            lastParen++;
+        }
+        
+        if (parenCount > 0) {
+            throw new IllegalArgumentException("Invalid CREATE TABLE query format: missing closing parenthesis");
+        }
+        lastParen--; // Adjust to the position of the closing parenthesis
+
+        String tableName = extractCreateTableName(original, firstParen);
+        String columnsPart = original.substring(firstParen + 1, lastParen).trim();
+        
+        // Extract partition information from the part after the columns
+        String tableDef = original.substring(lastParen + 1).trim();
+        // Remove the trailing semicolon if present
+        if (tableDef.endsWith(";")) {
+            tableDef = tableDef.substring(0, tableDef.length() - 1).trim();
+        }
+        System.out.println("DEBUG: tableDef = '" + tableDef + "'");
+        LOGGER.debug("Table definition for partition parsing: '{}'", tableDef);
+        
+        // The parsePartitionClause method expects only the PARTITION BY clause
+        // So we need to extract just that part
+        Matcher partitionMatcher = PARTITION_BY_PATTERN.matcher(tableDef);
+        boolean found = partitionMatcher.find();
+        if (!found) {
+            throw new IllegalArgumentException("Invalid partitioned table: missing PARTITION BY clause");
+        }
+        
+        String partitionClause = partitionMatcher.group(0); // The entire PARTITION BY clause
+        LOGGER.debug("Partition clause for parsing: '{}'", partitionClause);
+        
+        PartitionInfo partitionInfo = parsePartitionClause(partitionClause, tableName);
+        
+        List<String> columnDefs = splitColumnDefinitions(columnsPart);
+        List<String> columns = new ArrayList<>();
+        Map<String, Class<?>> columnTypes = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, Sequence> sequences = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        Map<String, String> columnCollations = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        String primaryKeyColumn = null;
+
+        for (String colDef : columnDefs) {
+            ColumnParseResult result = parseColumnDefinition(colDef);
+            columns.add(result.colName);
+
+            if (result.hasSequence) {
+                parseSequenceColumn(result.colName, result.type, result.constraints, colDef, result.colParts, sequences, columnTypes);
+            } else {
+                columnTypes.put(result.colName, resolveColumnJavaType(result.type));
+            }
+
+            if (result.collation != null) {
+                if (result.isPrimaryKey) {
+                    throw new IllegalArgumentException(
+                            "COLLATE is not supported on PRIMARY KEY column " + result.colName);
+                }
+                columnCollations.put(result.colName, result.collation);
+            }
+
+            if (result.isPrimaryKey) {
+                if (primaryKeyColumn != null) {
+                    throw new IllegalArgumentException("Multiple primary keys defined in table " + tableName);
+                }
+                primaryKeyColumn = result.colName;
+            }
+        }
+
+        LOGGER.info("Parsed CREATE PARTITIONED TABLE query: table={}, columns={}, types={}, primaryKey={}, partitionType={}, partitionColumn={}", 
+                tableName, columns, columnTypes, primaryKeyColumn, partitionInfo.type, partitionInfo.column);
+
+        return new CreateTableQuery(tableName, columns, columnTypes, primaryKeyColumn, sequences, columnCollations, partitionInfo);
+    }
+    
+    private PartitionInfo parsePartitionClause(String tableDef, String tableName) {
+        Matcher partitionMatcher = PARTITION_BY_PATTERN.matcher(tableDef);
+        boolean found = partitionMatcher.find();
+        if (!found) {
+            throw new IllegalArgumentException("Invalid partitioned table: missing PARTITION BY clause");
+        }
+        
+        String partitionTypeStr = partitionMatcher.group(1);
+        String partitionColumn = unquoteIdentifier(partitionMatcher.group(2));
+        
+        PartitionInfo.PartitionType partitionType;
+        switch (partitionTypeStr.toUpperCase()) {
+            case "RANGE":
+                partitionType = PartitionInfo.PartitionType.RANGE;
+                break;
+            case "LIST":
+                partitionType = PartitionInfo.PartitionType.LIST;
+                break;
+            case "HASH":
+                partitionType = PartitionInfo.PartitionType.HASH;
+                break;
+            default:
+                throw new IllegalArgumentException("Unsupported partition type: " + partitionTypeStr);
+        }
+        
+        return new PartitionInfo(partitionType, partitionColumn, tableName);
+    }
 
     private String extractCreateTableName(String original, int firstParen) {
         String rawName = original.substring(0, firstParen).replace(SqlKeywords.CREATE_TABLE, "").trim();
@@ -1965,12 +2120,19 @@ class QueryParser {
         }
         String colName = unquoteIdentifier(colParts[0]);
         String type = colParts[1].toUpperCase();
+        
+        // Clean up type by removing trailing characters like commas and parentheses
+        type = type.replaceAll("[,\\)]+$", "");
+        
+        // Extract base type without parentheses (e.g., "DECIMAL(10,2)" -> "DECIMAL")
+        String baseType = type.split("\\(")[0];
+        
         String constraints = colParts.length > 2 ? colParts[2].toUpperCase() : "";
         boolean isPrimaryKey = constraints.contains(SqlKeywords.PRIMARY_KEY);
-        boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || type.endsWith("_SEQUENCE");
+        boolean hasSequence = constraints.contains(SqlKeywords.SEQUENCE) || baseType.endsWith("_SEQUENCE");
         // Prompt 4 #49: COLLATE <name> column option; only CASE_INSENSITIVE today.
-        String collation = extractCollation(constraints, type, colDef);
-        return new ColumnParseResult(colName, type, constraints, colParts, isPrimaryKey, hasSequence, collation);
+        String collation = extractCollation(constraints, baseType, colDef);
+        return new ColumnParseResult(colName, baseType, constraints, colParts, isPrimaryKey, hasSequence, collation);
     }
 
     /**
@@ -2059,7 +2221,7 @@ class QueryParser {
             case SqlKeywords.TYPE_LONG -> Long.class;
             case SqlKeywords.TYPE_SHORT -> Short.class;
             case SqlKeywords.TYPE_BYTE -> Byte.class;
-            case SqlKeywords.TYPE_BIGDECIMAL -> BigDecimal.class;
+            case SqlKeywords.TYPE_BIGDECIMAL, SqlKeywords.TYPE_DECIMAL -> BigDecimal.class;
             case SqlKeywords.TYPE_FLOAT -> Float.class;
             case SqlKeywords.TYPE_DOUBLE -> Double.class;
             case SqlKeywords.TYPE_CHAR -> Character.class;

@@ -56,6 +56,7 @@ import diesel.storage.AbstractRowStorage;
 import diesel.storage.AtomicFileWriter;
 import diesel.storage.StorageFactory;
 import diesel.storage.StorageType;
+import diesel.partition.PartitionManager;
 
 /**
  * Contract implemented by every index (secondary and clustered) that maps
@@ -143,7 +144,7 @@ interface Index {
  * @see UniqueIndex
  * @see BTreeClusteredIndex
  */
-class Table implements Serializable {
+public class Table implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final int CURRENT_FORMAT_VERSION = 5;
     private static final Logger LOGGER = LoggerFactory.getLogger(Table.class);
@@ -249,6 +250,12 @@ class Table implements Serializable {
 
     /** When true, index insert/update operations are skipped (bulk-load mode). */
     private transient volatile boolean indicesDisabled;
+
+    /** Partitioning fields */
+    private boolean partitioned;
+    private String partitionType;
+    private String partitionColumn;
+    private transient PartitionManager partitionManager;
 
     /**
      * Table-level read/write lock. Writers (INSERT, DELETE, CREATE INDEX swap
@@ -410,6 +417,12 @@ class Table implements Serializable {
         this.rowCount = 0;
         this.avgRowSizeBytes = estimateAverageRowSizeBytes();
         this.lastAnalyzedMillis = 0;
+        
+        // Partitioning fields
+        this.partitioned = false;
+        this.partitionType = null;
+        this.partitionColumn = null;
+        this.partitionManager = null;
 
         validateSchema(columns, columnTypes);
 
@@ -595,6 +608,78 @@ class Table implements Serializable {
      */
     public Map<String, Index> getIndexes() {
         return indexes;
+    }
+
+    /**
+     * Returns true if this table is partitioned.
+     *
+     * @return true if the table is partitioned
+     */
+    public boolean isPartitioned() {
+        return partitioned;
+    }
+
+    /**
+     * Sets whether this table is partitioned.
+     *
+     * @param partitioned true if the table is partitioned
+     */
+    public void setPartitioned(boolean partitioned) {
+        this.partitioned = partitioned;
+    }
+
+    /**
+     * Returns the partition type.
+     *
+     * @return the partition type
+     */
+    public String getPartitionType() {
+        return partitionType;
+    }
+
+    /**
+     * Sets the partition type.
+     *
+     * @param partitionType the partition type
+     */
+    public void setPartitionType(String partitionType) {
+        this.partitionType = partitionType;
+    }
+
+    /**
+     * Returns the partition column name.
+     *
+     * @return the partition column name
+     */
+    public String getPartitionColumn() {
+        return partitionColumn;
+    }
+
+    /**
+     * Sets the partition column name.
+     *
+     * @param partitionColumn the partition column name
+     */
+    public void setPartitionColumn(String partitionColumn) {
+        this.partitionColumn = partitionColumn;
+    }
+
+    /**
+     * Returns the partition manager for this table.
+     *
+     * @return the partition manager
+     */
+    public PartitionManager getPartitionManager() {
+        return partitionManager;
+    }
+
+    /**
+     * Sets the partition manager for this table.
+     *
+     * @param partitionManager the partition manager
+     */
+    public void setPartitionManager(PartitionManager partitionManager) {
+        this.partitionManager = partitionManager;
     }
 
     /**

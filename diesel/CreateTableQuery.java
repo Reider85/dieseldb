@@ -17,6 +17,7 @@ class CreateTableQuery implements Query<Void> {
     private final String primaryKeyColumn;
     private final Map<String, Sequence> sequences;
     private final Map<String, String> columnCollations;
+    private final PartitionInfo partitionInfo;
 
     /**
      * Creates a CREATE TABLE query with the given schema (no collations).
@@ -28,7 +29,7 @@ class CreateTableQuery implements Query<Void> {
      * @param sequences        the sequences declared in the CREATE TABLE
      */
     public CreateTableQuery(String tableName, List<String> columns, Map<String, Class<?>> columnTypes, String primaryKeyColumn, Map<String, Sequence> sequences) {
-        this(tableName, columns, columnTypes, primaryKeyColumn, sequences, Collections.emptyMap());
+        this(tableName, columns, columnTypes, primaryKeyColumn, sequences, Collections.emptyMap(), null);
     }
 
     /**
@@ -45,12 +46,31 @@ class CreateTableQuery implements Query<Void> {
     public CreateTableQuery(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
                             String primaryKeyColumn, Map<String, Sequence> sequences,
                             Map<String, String> columnCollations) {
+        this(tableName, columns, columnTypes, primaryKeyColumn, sequences, columnCollations, null);
+    }
+
+    /**
+     * Creates a CREATE TABLE query with partitioning support.
+     *
+     * @param tableName        the table name
+     * @param columns          the ordered column names
+     * @param columnTypes      the column name to type mapping
+     * @param primaryKeyColumn the primary key column, or null
+     * @param sequences        the sequences declared in the CREATE TABLE
+     * @param columnCollations  the column name to collation mapping (only
+     *                         CASE_INSENSITIVE is supported today)
+     * @param partitionInfo    the partitioning information, or null for non-partitioned tables
+     */
+    public CreateTableQuery(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
+                            String primaryKeyColumn, Map<String, Sequence> sequences,
+                            Map<String, String> columnCollations, PartitionInfo partitionInfo) {
         this.tableName = tableName;
         this.columns = columns;
         this.columnTypes = columnTypes;
         this.primaryKeyColumn = primaryKeyColumn;
         this.sequences = sequences;
         this.columnCollations = columnCollations != null ? columnCollations : Collections.emptyMap();
+        this.partitionInfo = partitionInfo;
     }
 
     /**
@@ -108,6 +128,24 @@ class CreateTableQuery implements Query<Void> {
     }
 
     /**
+     * Returns the partitioning information, or null for non-partitioned tables.
+     *
+     * @return the partition information
+     */
+    public PartitionInfo getPartitionInfo() {
+        return partitionInfo;
+    }
+
+    /**
+     * Returns true if this is a partitioned table.
+     *
+     * @return true if the table is partitioned
+     */
+    public boolean isPartitioned() {
+        return partitionInfo != null;
+    }
+
+    /**
      * Creates the table through the attached database and registers the
      * sequences on it.
      *
@@ -117,10 +155,11 @@ class CreateTableQuery implements Query<Void> {
     @Override
     public Void execute(Table table) {
         Database database = table.getDatabase(); // Assuming Table has a method to get the Database
-        database.createTable(tableName, columns, columnTypes, primaryKeyColumn, columnCollations);
+        database.createTable(tableName, columns, columnTypes, primaryKeyColumn, columnCollations, partitionInfo);
         for (Map.Entry<String, Sequence> entry : sequences.entrySet()) {
             table.getSequences().put(entry.getKey(), entry.getValue());
         }
         return null;
     }
 }
+

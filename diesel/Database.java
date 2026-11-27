@@ -18,6 +18,9 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
@@ -33,6 +36,12 @@ import diesel.recovery.FuzzyCheckpoint;
 import diesel.recovery.SharpCheckpoint;
 import diesel.replication.ReplicationSlot;
 import diesel.replication.ReplicationSlotRegistry;
+import diesel.partition.PartitionManager;
+import diesel.partition.RangePartition;
+import diesel.partition.ListPartition;
+import diesel.partition.HashPartition;
+import diesel.CreateTableQuery;
+import diesel.PartitionInfo;
     import java.util.concurrent.CompletableFuture;
     import java.util.concurrent.ConcurrentHashMap;
     import java.util.concurrent.ExecutionException;
@@ -846,6 +855,146 @@ public class Database {
 }
           
         LOGGER.info("Created table {} with primary key {}", tableName, primaryKeyColumn);
+    }
+
+    /**
+     * Creates a partitioned table with per-column collations (prompt4 #49).
+     *
+     * @param tableName        the table name, must be unique
+     * @param columns          the ordered list of column names
+     * @param columnTypes      the column name to type mapping
+     * @param primaryKeyColumn the primary key column, or null for none
+     * @param columnCollations  the column name to collation mapping (only
+     *                         CASE_INSENSITIVE is supported today)
+     * @param partitionInfo    the partitioning information, or null for non-partitioned tables
+     * @throws IllegalArgumentException if the table already exists or the
+     *                                  primary key column is not part of the schema
+     */
+    public void createTable(String tableName, List<String> columns, Map<String, Class<?>> columnTypes,
+                            String primaryKeyColumn, Map<String, String> columnCollations, 
+                            PartitionInfo partitionInfo) {
+        if (tables.containsKey(tableName)) {
+            throw new IllegalArgumentException(ErrorMessages.TABLE_PREFIX + tableName + " already exists");
+        }
+        
+        // Create table
+        Table newTable = new Table(this, tableName, columns, columnTypes, primaryKeyColumn, new HashMap<String, Sequence>());
+        // Prompt 4 #49: collations are installed after construction (the Table
+        // ctor has no collation parameter - many call sites use the 6-arg form).
+        newTable.setColumnCollations(columnCollations);
+        tables.put(tableName, newTable);
+        queryCache.invalidateAll();
+        for (Transaction transaction : activeTransactions.values()) {
+            if (transaction.isActive()) {
+                transaction.updateTable(tableName, newTable);
+            }
+        }
+        
+        // Setup partitioning if specified
+        if (partitionInfo != null) {
+            setupPartitioning(newTable, partitionInfo);
+        }
+        
+        // Update catalog
+        try {
+            List<CatalogSchema.ColumnSchema> columnSchemas = new ArrayList<>();
+            for (String column : columns) {
+                Class<?> type = columnTypes.get(column);
+                columnSchemas.add(new CatalogSchema.ColumnSchema(
+                    column, 
+                    type.getSimpleName(), 
+                    true, // nullable by default
+                    column.equals(primaryKeyColumn) // unique if primary key
+                ));
+            }
+            
+            List<String> sequences = new ArrayList<>();
+            for (Map.Entry<String, Sequence> entry : newTable.getSequences().entrySet()) {
+                sequences.add(entry.getKey());
+            }
+            
+            List<CatalogSchema.IndexSchema> indexSchemas = new ArrayList<>();
+            // TODO: Add index information when we have index metadata
+            
+catalog.createTableSchema(
+                tableName, 
+                columnSchemas, 
+                primaryKeyColumn, 
+                newTable.getStorageType(), 
+                sequences, 
+                indexSchemas
+        );
+        } catch (IllegalStateException e) {
+            LOGGER.warn("Failed to update catalog for table " + tableName, e);
+}
+          
+        if (partitionInfo != null) {
+            LOGGER.info("Created partitioned table {} with primary key {} partitioned by {} on column {}", 
+                    tableName, primaryKeyColumn, partitionInfo.type, partitionInfo.column);
+        } else {
+            LOGGER.info("Created table {} with primary key {}", tableName, primaryKeyColumn);
+        }
+    }
+    
+    private void setupPartitioning(Table table, PartitionInfo partitionInfo) {
+        // Initialize partition manager for this table
+        LOGGER.info("Setting up partitioning for table {} on column {} with type {}", 
+                table.getName(), partitionInfo.column, partitionInfo.type);
+        
+        // Convert PartitionInfo to PartitionManager.PartitionType
+        PartitionManager.PartitionType pmType = PartitionManager.PartitionType.valueOf(partitionInfo.type.name());
+        
+        // Create partition manager
+        PartitionManager partitionManager = new PartitionManager(this, table.getName(), pmType, partitionInfo.column, new ArrayList<>(), null);
+        
+        // For RANGE partitioning, create default partition
+        if (partitionInfo.type == PartitionInfo.PartitionType.RANGE) {
+            // Create a default partition for all values
+            RangePartition defaultPartition = new RangePartition(
+                table.getName() + "_default", 
+                table,
+                null, // no lower bound
+                null, // no upper bound
+                createComparator(partitionInfo.column, table.getColumnTypes())
+            );
+            partitionManager.addPartition(defaultPartition);
+            partitionManager.setDefaultPartition(defaultPartition);
+        }
+        // For LIST partitioning, create default partition
+        else if (partitionInfo.type == PartitionInfo.PartitionType.LIST) {
+            // Create a default partition for null values
+            ListPartition defaultPartition = new ListPartition(
+                table.getName() + "_default", 
+                table,
+                Collections.singletonList(null)
+            );
+            partitionManager.addPartition(defaultPartition);
+            partitionManager.setDefaultPartition(defaultPartition);
+        }
+        // For HASH partitioning, create partitions based on hash function
+        else if (partitionInfo.type == PartitionInfo.PartitionType.HASH) {
+            // Create 4 hash partitions by default
+            for (int i = 0; i < 4; i++) {
+                HashPartition partition = new HashPartition(
+                    table.getName() + "_partition_" + i, 
+                    table,
+                    i,
+                    4
+                );
+                partitionManager.addPartition(partition);
+            }
+        }
+        
+        // Store partition manager in the table
+        table.setPartitionManager(partitionManager);
+        
+        // Mark table as partitioned
+        table.setPartitioned(true);
+        table.setPartitionType(partitionInfo.type.name());
+        table.setPartitionColumn(partitionInfo.column);
+        
+        LOGGER.info("Created partitioned table {} with primary key {} partitioned by {} on column {}", 
+                table.getName(), table.getPrimaryKeyColumn(), partitionInfo.type, partitionInfo.column);
     }
 
     /**
@@ -2144,7 +2293,7 @@ public class Database {
 
     private Object executeCreateTable(CreateTableQuery createQuery) {
         createTable(createQuery.getTableName(), createQuery.getColumns(), createQuery.getColumnTypes(),
-                createQuery.getPrimaryKeyColumn(), createQuery.getColumnCollations());
+                createQuery.getPrimaryKeyColumn(), createQuery.getColumnCollations(), createQuery.getPartitionInfo());
         Table table = getTable(createQuery.getTableName());
         for (Map.Entry<String, Sequence> entry : createQuery.getSequences().entrySet()) {
             table.getSequences().put(entry.getKey(), entry.getValue());
@@ -4429,5 +4578,210 @@ public class Database {
         }
         
         return "Subscription dropped successfully: " + subscriptionName;
+    }
+    
+    // Partitioning support
+    
+    /**
+     * Creates a partition for a partitioned table.
+     * 
+     * @param parentTableName the name of the parent partitioned table
+     * @param partitionName the name of the partition to create
+     * @param partitionValues the values for this partition (for LIST partitioning)
+     * @param minValue the minimum value for this partition (for RANGE partitioning)
+     * @param maxValue the maximum value for this partition (for RANGE partitioning)
+     * @param partitionNumber the partition number (for HASH partitioning)
+     * @param isDefault true if this is the default partition
+     * @throws IllegalArgumentException if the parent table doesn't exist or is not partitioned
+     */
+    public void createPartition(String parentTableName, String partitionName, 
+                               List<Object> partitionValues, Object minValue, Object maxValue,
+                               Integer partitionNumber, boolean isDefault) {
+        Table parentTable;
+        try {
+            parentTable = getTable(parentTableName);
+        } catch (TableNotFoundException e) {
+            throw new IllegalArgumentException("Parent table " + parentTableName + " does not exist", e);
+        }
+        
+        if (!parentTable.isPartitioned()) {
+            throw new IllegalArgumentException("Table " + parentTableName + " is not partitioned");
+        }
+        
+        if (!parentTable.isPartitioned()) {
+            throw new IllegalArgumentException("Table " + parentTableName + " is not partitioned");
+        }
+        
+        // Create a new table for this partition
+        String partitionTableName = parentTableName + "_" + partitionName;
+        List<String> columns = parentTable.getColumns();
+        Map<String, Class<?>> columnTypes = parentTable.getColumnTypes();
+        String primaryKeyColumn = parentTable.getPrimaryKeyColumn();
+        
+        createTable(partitionTableName, columns, columnTypes, primaryKeyColumn);
+        
+        // Create the appropriate partition object
+        PartitionManager.Partition partition;
+        PartitionManager.PartitionType partitionType = 
+            PartitionManager.PartitionType.valueOf(parentTable.getPartitionType().toUpperCase());
+        
+        switch (partitionType) {
+            case RANGE:
+                if (minValue == null || maxValue == null) {
+                    throw new IllegalArgumentException("Range partition requires both minValue and maxValue");
+                }
+                // Find a suitable comparator for the partition column
+                Comparable<Object> comparator = createComparator(parentTable.getPartitionColumn(), columnTypes);
+                partition = new RangePartition(partitionName, getTable(partitionTableName), 
+                                            minValue, maxValue, comparator);
+                break;
+                
+            case LIST:
+                if (partitionValues == null || partitionValues.isEmpty()) {
+                    if (isDefault) {
+                        // For default partitions, create a partition that accepts any value
+                        partition = new ListPartition(partitionName, getTable(partitionTableName), null);
+                    } else {
+                        throw new IllegalArgumentException("List partition requires partition values");
+                    }
+                } else {
+                    partition = new ListPartition(partitionName, getTable(partitionTableName), partitionValues);
+                }
+                break;
+                
+            case HASH:
+                if (partitionNumber == null) {
+                    throw new IllegalArgumentException("Hash partition requires partitionNumber");
+                }
+                int totalPartitions = estimateTotalPartitions(parentTable);
+                partition = new HashPartition(partitionName, getTable(partitionTableName), 
+                                          partitionNumber, totalPartitions);
+                break;
+                
+            default:
+                throw new IllegalArgumentException("Unsupported partition type: " + partitionType);
+        }
+        
+        // Set up the partition manager if it doesn't exist
+        if (parentTable.getPartitionManager() == null) {
+            List<PartitionManager.Partition> partitions = new ArrayList<>();
+            if (!isDefault) {
+                partitions.add(partition);
+            }
+            
+            PartitionManager.Partition defaultPartition = null;
+            if (isDefault) {
+                defaultPartition = partition;
+            }
+            
+            PartitionManager partitionManager = new PartitionManager(
+                this, parentTableName, partitionType, parentTable.getPartitionColumn(),
+                partitions, defaultPartition);
+            
+            parentTable.setPartitionManager(partitionManager);
+        } else {
+            // Add partition to existing manager
+            PartitionManager partitionManager = parentTable.getPartitionManager();
+            if (isDefault) {
+                // For default partitions, replace the existing default partition
+                // Create a new list without the existing default partition
+                List<PartitionManager.Partition> newPartitions = new ArrayList<>();
+                for (PartitionManager.Partition p : partitionManager.getPartitions()) {
+                    if (partitionManager.getDefaultPartition() == null || 
+                        !partitionManager.getDefaultPartition().getName().equals(p.getName())) {
+                        newPartitions.add(p);
+                    }
+                }
+                // Set the new default partition
+                partitionManager.setDefaultPartition(partition);
+                // Replace the partitions list
+                partitionManager.setPartitions(newPartitions);
+            }
+            partitionManager.addPartition(partition);
+        }
+        
+        LOGGER.info("Created partition {} for table {} with values {}", partitionName, parentTableName, 
+                   partitionValues != null ? partitionValues : (minValue + " - " + maxValue));
+    }
+    
+    /**
+     * Creates a default partition for a partitioned table.
+     * 
+     * @param parentTableName the name of the parent partitioned table
+     * @param partitionName the name of the default partition
+     * @throws IllegalArgumentException if the parent table doesn't exist or is not partitioned
+     */
+    public void createDefaultPartition(String parentTableName, String partitionName) {
+        createPartition(parentTableName, partitionName, null, null, null, null, true);
+    }
+    
+    /**
+     * Estimates the total number of partitions for a hash partitioned table.
+     * This is a heuristic - in production, this would be configurable.
+     */
+    private int estimateTotalPartitions(Table parentTable) {
+        // For now, assume 4 partitions for hash partitioning
+        // This could be made configurable based on table size
+        return 4;
+    }
+    
+    /**
+     * Creates a comparator for the given column type.
+     */
+    @SuppressWarnings("unchecked")
+    private Comparable<Object> createComparator(String columnName, Map<String, Class<?>> columnTypes) {
+        Class<?> columnType = columnTypes.get(columnName);
+        if (columnType == null) {
+            throw new IllegalArgumentException("Column " + columnName + " not found");
+        }
+        
+        // Create a comparator based on the column type
+        if (columnType == Long.class || columnType == Integer.class || columnType == Short.class || columnType == Byte.class) {
+            return (Comparable<Object>) value -> ((Number) value).intValue();
+        } else if (columnType == Double.class || columnType == Float.class) {
+            return (Comparable<Object>) value -> (int) ((Number) value).doubleValue();
+        } else if (columnType == BigDecimal.class) {
+            return (Comparable<Object>) value -> ((BigDecimal) value).compareTo(BigDecimal.ZERO);
+        } else if (columnType == String.class) {
+            return (Comparable<Object>) value -> ((String) value).compareTo("");
+        } else if (columnType == LocalDate.class) {
+            return (Comparable<Object>) value -> ((LocalDate) value).compareTo(LocalDate.now());
+        } else if (columnType == LocalDateTime.class) {
+            return (Comparable<Object>) value -> ((LocalDateTime) value).compareTo(LocalDateTime.now());
+        } else {
+            throw new UnsupportedOperationException("Unsupported column type for partitioning: " + columnType.getSimpleName());
+        }
+    }
+    
+    /**
+     * Helper method to compare two objects of the same type.
+     */
+    private static int compareObjects(Object obj1, Object obj2) {
+        if (obj1 == null && obj2 == null) {
+            return 0;
+        }
+        if (obj1 == null) {
+            return -1;
+        }
+        if (obj2 == null) {
+            return 1;
+        }
+        
+        if (obj1 instanceof Number && obj2 instanceof Number) {
+            return Double.compare(((Number) obj1).doubleValue(), ((Number) obj2).doubleValue());
+        } else if (obj1 instanceof String && obj2 instanceof String) {
+            return ((String) obj1).compareTo((String) obj2);
+        } else if (obj1 instanceof LocalDate && obj2 instanceof LocalDate) {
+            return ((LocalDate) obj1).compareTo((LocalDate) obj2);
+        } else if (obj1 instanceof LocalDateTime && obj2 instanceof LocalDateTime) {
+            return ((LocalDateTime) obj1).compareTo((LocalDateTime) obj2);
+        } else if (obj1 instanceof Integer && obj2 instanceof Integer) {
+            return ((Integer) obj1).compareTo((Integer) obj2);
+        } else if (obj1 instanceof Long && obj2 instanceof Long) {
+            return ((Long) obj1).compareTo((Long) obj2);
+} else {
+            throw new IllegalArgumentException("Cannot compare objects of different types: " + 
+                obj1.getClass() + " and " + obj2.getClass());
+        }
     }
 }

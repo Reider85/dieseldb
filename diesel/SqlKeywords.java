@@ -144,6 +144,7 @@ public final class SqlKeywords {
     public static final String TYPE_SHORT = "SHORT";
     public static final String TYPE_BYTE = "BYTE";
     public static final String TYPE_BIGDECIMAL = "BIGDECIMAL";
+    public static final String TYPE_DECIMAL = "DECIMAL";
     public static final String TYPE_FLOAT = "FLOAT";
     public static final String TYPE_DOUBLE = "DOUBLE";
     public static final String TYPE_CHAR = "CHAR";
