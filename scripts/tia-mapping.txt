@@ -53,6 +53,8 @@ diesel/storage/page/*.java		storage
 diesel/storage/json/*.java		storage
 diesel/storage/avro/*.java		storage
 diesel/schema/*.java			query,query-full,storage
+diesel/PartitionInfo.java		storage,query-full
+diesel/partition/*.java			storage,query-full
 
 # Format-specific storage tests (gated by @StorageType + diesel.storage.type)
 # When these source files change, the corresponding format profile should run
@@ -186,6 +188,7 @@ diesel/AlterTableCopyAlgorithm.java	query,query-full,concurrency
 diesel/DualWriteCoordinator.java	query,query-full,concurrency
 diesel/AlterStatusQuery.java	smoke,query,query-full
 diesel/AlterTableDropColumnQuery.java	query,query-full
+diesel/AlterTableExchangePartitionQuery.java	query,query-full
 
 # Backup/Restore functionality
 diesel/backup/*.java			smoke,query,storage

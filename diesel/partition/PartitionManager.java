@@ -20,6 +20,7 @@ public class PartitionManager {
     private final String partitionColumn;
     private List<Partition> partitions;
     private Partition defaultPartition;
+    private final Map<String, Subpartition> subpartitions = new ConcurrentHashMap<>();
     
     /**
      * Types of partitioning supported.
@@ -200,6 +201,84 @@ public class PartitionManager {
     }
     
     /**
+     * Registers a level-2 scheme for one level-1 partition.
+     *
+     * @param subpartition the scheme to register
+     */
+    public void addSubpartition(Subpartition subpartition) {
+        subpartitions.put(subpartition.getParentPartitionName(), subpartition);
+        LOGGER.info("Added subpartition {} for partition {} in table {}", subpartition.getName(),
+                subpartition.getParentPartitionName(), parentTableName);
+    }
+
+    /**
+     * Returns the level-2 scheme attached to a partition, if any.
+     */
+    public Subpartition getSubpartition(String partitionName) {
+        return subpartitions.get(partitionName);
+    }
+
+    /**
+     * Returns whether this manager has any subpartitioning schemes.
+     */
+    public boolean hasSubpartitions() {
+        return !subpartitions.isEmpty();
+    }
+
+    /**
+     * Returns an unmodifiable view of all registered subpartition schemes.
+     */
+    public Map<String, Subpartition> getSubpartitions() {
+        return Collections.unmodifiableMap(subpartitions);
+    }
+
+    /**
+     * Applies pruning at both partitioning levels: first the level-1 partition
+     * column, then, for every surviving partition, its level-2 scheme.
+     *
+     * @param filterValues the WHERE-clause filter values
+     * @return combined pruning result
+     */
+    public TwoLevelPruningResult routeSelectWithTwoLevelPruning(Map<String, Object> filterValues) {
+        PartitionPruningResult level1 = routeSelectWithPruning(filterValues);
+        Map<String, Subpartition.PruningResult> level2 = new LinkedHashMap<>();
+        int skipped = 0;
+        int total = 0;
+        for (Partition partition : level1.getPartitionsToScan()) {
+            Subpartition subpartition = subpartitions.get(partition.getName());
+            if (subpartition == null) {
+                continue;
+            }
+            Subpartition.PruningResult result = subpartition.prune(filterValues);
+            level2.put(partition.getName(), result);
+            skipped += result.getPartitionsSkipped();
+            total += result.getTotalPartitions();
+        }
+        return new TwoLevelPruningResult(level1, level2, skipped, total);
+    }
+
+    /**
+     * Looks up a partition by name, including the default partition.
+     *
+     * @param partitionName the partition name
+     * @return the matching partition, or null when no such partition exists
+     */
+    public Partition findPartitionByName(String partitionName) {
+        if (partitionName == null) {
+            return null;
+        }
+        for (Partition partition : partitions) {
+            if (partitionName.equals(partition.getName())) {
+                return partition;
+            }
+        }
+        if (defaultPartition != null && partitionName.equals(defaultPartition.getName())) {
+            return defaultPartition;
+        }
+        return null;
+    }
+
+    /**
      * Adds a new partition to this manager.
      * 
      * @param partition the partition to add
@@ -294,6 +373,57 @@ public class PartitionManager {
                     pruningRatio * 100, reason);
         }
         
+        @Override
+        public String toString() {
+            return getPruningSummary();
+        }
+    }
+
+    /**
+     * Combined result of two-level partition pruning (prompt4 #65).
+     */
+    public static final class TwoLevelPruningResult {
+        private final PartitionPruningResult level1;
+        private final Map<String, Subpartition.PruningResult> level2;
+        private final int subpartitionsSkipped;
+        private final int totalSubpartitions;
+
+        public TwoLevelPruningResult(PartitionPruningResult level1,
+                                     Map<String, Subpartition.PruningResult> level2,
+                                     int subpartitionsSkipped, int totalSubpartitions) {
+            this.level1 = level1;
+            this.level2 = Collections.unmodifiableMap(new LinkedHashMap<>(level2));
+            this.subpartitionsSkipped = subpartitionsSkipped;
+            this.totalSubpartitions = totalSubpartitions;
+        }
+
+        public PartitionPruningResult getLevel1() {
+            return level1;
+        }
+
+        public Map<String, Subpartition.PruningResult> getLevel2() {
+            return level2;
+        }
+
+        public int getSubpartitionsSkipped() {
+            return subpartitionsSkipped;
+        }
+
+        public int getTotalSubpartitions() {
+            return totalSubpartitions;
+        }
+
+        public double getSubpartitionPruningRatio() {
+            return totalSubpartitions == 0 ? 0.0 : (double) subpartitionsSkipped / totalSubpartitions;
+        }
+
+        public String getPruningSummary() {
+            return level1.getPruningSummary()
+                    + String.format("; Subpartitions: Scan: %d, Skip: %d, Total: %d, Ratio: %.2f%%",
+                    totalSubpartitions - subpartitionsSkipped, subpartitionsSkipped,
+                    totalSubpartitions, getSubpartitionPruningRatio() * 100);
+        }
+
         @Override
         public String toString() {
             return getPruningSummary();

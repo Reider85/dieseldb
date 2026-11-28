@@ -1,1 +1,1 @@
-3.5.18 PARTITION_PRUNING: RANGE/LIST/HASH pruning with EXPLAIN output; fix DROP TABLE IF EXISTS parsing and multi-value LIST definitions
+3.5.19 R3-017 step 3: EXCHANGE PARTITION + two-level LIST/HASH subpartitioning with pruning

@@ -6,6 +6,7 @@ import diesel.partition.PartitionManager;
 import diesel.partition.PartitionPruningIntegration;
 import diesel.partition.RangePartition;
 import diesel.partition.ListPartition;
+import diesel.partition.Subpartition;
 
 /**
  * Executes an EXPLAIN statement: renders a textual execution-plan tree for a
@@ -174,22 +175,35 @@ class ExplainQuery implements Query<String> {
         
         PartitionManager partitionManager = table.getPartitionManager();
         
-        // Extract filter values from the WHERE clause conditions
+        // Extract filter values from the WHERE clause conditions; the raw SQL
+        // fallback covers condition lists that cannot yet be introspected.
         Map<String, Object> filterValues = PartitionPruningIntegration.extractFilterValuesFromConditions(
             select.getConditions());
-        
+        if (filterValues.isEmpty() && innerSql != null) {
+            filterValues = PartitionPruningIntegration.extractFilterValues(innerSql);
+        }
+
         if (filterValues.isEmpty()) {
             sb.append("\n  Partition pruning: No filter conditions on partition column - scanning all ")
               .append(partitionManager.getPartitions().size()).append(" partitions");
+            appendSubpartitionInfo(sb, partitionManager, null);
             return;
         }
-        
+
+        if (partitionManager.hasSubpartitions()) {
+            PartitionManager.TwoLevelPruningResult twoLevel =
+                    partitionManager.routeSelectWithTwoLevelPruning(filterValues);
+            sb.append("\n  Partition pruning: ").append(twoLevel.getPruningSummary());
+            appendSubpartitionInfo(sb, partitionManager, twoLevel);
+            return;
+        }
+
         // Apply partition pruning
-        PartitionManager.PartitionPruningResult pruningResult = 
+        PartitionManager.PartitionPruningResult pruningResult =
             partitionManager.routeSelectWithPruning(filterValues);
-        
+
         sb.append("\n  Partition pruning: ").append(pruningResult.getPruningSummary());
-        
+
         // Show detailed partition information if not too many partitions
         if (pruningResult.getPartitionsToScan().size() <= 5) {
             sb.append("\n  Partitions to scan:");
@@ -204,6 +218,25 @@ class ExplainQuery implements Query<String> {
                         sb.append(" ").append(list.getPartitionValues());
                     }
                 }
+            }
+        }
+    }
+
+    private void appendSubpartitionInfo(StringBuilder sb, PartitionManager manager,
+                                        PartitionManager.TwoLevelPruningResult result) {
+        if (!manager.hasSubpartitions()) {
+            return;
+        }
+        sb.append("\n  Subpartition pruning:");
+        for (java.util.Map.Entry<String, Subpartition> entry : manager.getSubpartitions().entrySet()) {
+            Subpartition sub = entry.getValue();
+            Subpartition.PruningResult pruned = result == null ? null : result.getLevel2().get(entry.getKey());
+            sb.append("\n    ").append(entry.getKey()).append(" -> ").append(sub.getName())
+              .append(" (").append(sub.getType()).append(" on ").append(sub.getColumn()).append(")");
+            if (pruned != null) {
+                sb.append(": scan ").append(pruned.getPartitionsToScan().size())
+                  .append(", skip ").append(pruned.getPartitionsSkipped())
+                  .append(", total ").append(pruned.getTotalPartitions());
             }
         }
     }

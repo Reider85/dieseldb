@@ -2092,6 +2092,29 @@ public class Table implements Serializable {
     }
 
     /**
+     * Replaces the complete row set in one atomic step. Used by
+     * {@code ALTER TABLE ... EXCHANGE PARTITION ... WITH TABLE ...} (prompt4 #65)
+     * where two tables swap their data containers without recreating either
+     * table. The caller must hold this table's write lock when several tables
+     * are exchanged together.
+     *
+     * @param newRows the replacement rows (copied defensively)
+     */
+    public void replaceRowsAtomically(List<Map<String, Object>> newRows) {
+        List<Map<String, Object>> replacement = new ArrayList<>(newRows);
+        rows.clear();
+        rows.addAll(replacement);
+        if (storage != null) {
+            storage.setRows(replacement);
+        }
+        deletedRows = new BitSet();
+        rowVersions = new ConcurrentHashMap<>();
+        rowCount = replacement.size();
+        rebuildAllIndexes();
+        markStatsDirty();
+    }
+
+    /**
      * Returns true if the row at {@code rowIndex} must be returned to the reader
      * identified by the {@link MvccReadContext} of the current thread.
      *

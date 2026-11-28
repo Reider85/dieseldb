@@ -1723,6 +1723,10 @@ class QueryParser {
      */
     private Query<?> parseAlterTableStatement(String original) {
         String cleaned = original.trim().replaceAll(";\\s*$", "");
+        java.util.regex.Matcher exchange = ALTER_EXCHANGE_PATTERN.matcher(cleaned);
+        if (exchange.matches()) {
+            return buildAlterExchangePartitionQuery(exchange);
+        }
         java.util.regex.Matcher drop = ALTER_DROP_PATTERN.matcher(cleaned);
         if (drop.matches()) {
             return buildAlterDropColumnQuery(drop);
@@ -1735,7 +1739,8 @@ class QueryParser {
                 "Invalid ALTER TABLE syntax: expected ALTER TABLE <t> ADD COLUMN <c> <type>"
                 + " [ALGORITHM=COPY|INPLACE] [, LOCK=NONE|SHARED|EXCLUSIVE]"
                 + " or ALTER TABLE <t> DROP COLUMN <c>"
-                + " [ALGORITHM=COPY|INPLACE] [, LOCK=NONE|SHARED|EXCLUSIVE]");
+                + " [ALGORITHM=COPY|INPLACE] [, LOCK=NONE|SHARED|EXCLUSIVE]"
+                + " or ALTER TABLE <t> EXCHANGE PARTITION <p> WITH TABLE <other>");
     }
 
     /**
@@ -1752,6 +1757,15 @@ class QueryParser {
     /** DROP COLUMN grammar (prompt4 #39): action clause plus optional KEY=VALUE options. */
     private static final java.util.regex.Pattern ALTER_DROP_PATTERN = java.util.regex.Pattern.compile(
             "^ALTER\\s+TABLE\\s+(?<table>[^\\s,]+)\\s+DROP\\s+COLUMN\\s+(?<column>[^\\s,]+)(?<opts>.*)$",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * EXCHANGE PARTITION grammar (prompt4 #65): metadata/data swap between a
+     * partition of the target table and a whole external table.
+     */
+    private static final java.util.regex.Pattern ALTER_EXCHANGE_PATTERN = java.util.regex.Pattern.compile(
+            "^ALTER\\s+TABLE\\s+(?<table>[^\\s,]+)\\s+EXCHANGE\\s+PARTITION\\s+(?<partition>[^\\s,]+)"
+            + "\\s+WITH\\s+TABLE\\s+(?<other>[^\\s,]+)\\s*;?\\s*$",
             java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /** One {@code KEY=VALUE} ALTER option token. */
@@ -1816,6 +1830,13 @@ class QueryParser {
         }
         throw new SyntaxErrorException(
                 "Unsupported ALGORITHM: " + algoToken + " (supported: COPY, INPLACE)");
+    }
+
+    private Query<?> buildAlterExchangePartitionQuery(java.util.regex.Matcher m) {
+        return new AlterTableExchangePartitionQuery(
+                unquoteIdentifier(m.group("table")).toUpperCase(java.util.Locale.ROOT),
+                unquoteIdentifier(m.group("partition")),
+                unquoteIdentifier(m.group("other")).toUpperCase(java.util.Locale.ROOT));
     }
 
     private Query<?> buildAlterAddColumnQuery(java.util.regex.Matcher m) {

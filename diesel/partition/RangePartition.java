@@ -72,11 +72,14 @@ public class RangePartition implements PartitionManager.Partition {
         }
         
         try {
-            int cmpMin = ((Comparable<Object>) minValue).compareTo(value);
-            int cmpMax = ((Comparable<Object>) value).compareTo(maxValue);
-            
-            // Value is >= minValue and < maxValue
-            return cmpMin <= 0 && cmpMax < 0;
+            // A null bound means unbounded (first partition / MAXVALUE partition).
+            if (minValue != null && ((Comparable<Object>) minValue).compareTo(value) > 0) {
+                return false;
+            }
+            if (maxValue != null && ((Comparable<Object>) value).compareTo(maxValue) >= 0) {
+                return false;
+            }
+            return true;
         } catch (ClassCastException e) {
             throw new IllegalArgumentException("Cannot compare value " + value + 
                     " with range bounds using comparator", e);

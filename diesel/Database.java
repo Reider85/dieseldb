@@ -38,9 +38,11 @@ import diesel.recovery.SharpCheckpoint;
 import diesel.replication.ReplicationSlot;
 import diesel.replication.ReplicationSlotRegistry;
 import diesel.partition.PartitionManager;
+import diesel.partition.PartitionExchange;
 import diesel.partition.RangePartition;
 import diesel.partition.ListPartition;
 import diesel.partition.HashPartition;
+import diesel.partition.Subpartition;
 import diesel.CreateTableQuery;
 import diesel.PartitionInfo;
     import java.util.concurrent.CompletableFuture;
@@ -1432,6 +1434,7 @@ catalog.createTableSchema(
         }
         if (parsedQuery instanceof AlterTableAddColumnQuery
                 || parsedQuery instanceof AlterTableDropColumnQuery
+                || parsedQuery instanceof AlterTableExchangePartitionQuery
                 || parsedQuery instanceof AlterStatusQuery) {
             return Privilege.Action.ALTER;
         }
@@ -1737,6 +1740,9 @@ catalog.createTableSchema(
         if (parsedQuery instanceof AlterTableDropColumnQuery q) {
             return executeAlterTableDropColumn(q);
         }
+        if (parsedQuery instanceof AlterTableExchangePartitionQuery q) {
+            return executeExchangePartition(q);
+        }
         if (parsedQuery instanceof AlterStatusQuery) {
             return executeAlterStatus();
         }
@@ -1851,7 +1857,8 @@ catalog.createTableSchema(
         if (parsedQuery instanceof DeleteQuery) return "DELETE";
         if (parsedQuery instanceof CreateTableQuery || parsedQuery instanceof DropTableQuery
                 || parsedQuery instanceof CreateIndexQueryBase || parsedQuery instanceof CreateCompositeIndexQuery
-                || parsedQuery instanceof CreateCoveringIndexQuery) {
+                || parsedQuery instanceof CreateCoveringIndexQuery
+                || parsedQuery instanceof AlterTableExchangePartitionQuery) {
             return "DDL";
         }
         return "OTHER";
@@ -2577,6 +2584,105 @@ catalog.createTableSchema(
         }
         scheduleDropColumnStrip(table);
         return "Table altered successfully: dropped column " + column;
+    }
+
+    /**
+     * Executes {@code ALTER TABLE ... EXCHANGE PARTITION ... WITH TABLE ...}
+     * (prompt4 #65).
+     */
+    private Object executeExchangePartition(AlterTableExchangePartitionQuery query) {
+        PartitionExchange.ExchangeResult result = exchangePartition(
+                query.getTableName(), query.getPartitionName(), query.getOtherTableName());
+        return "Partition " + result.partitionName() + " of table " + result.parentTable()
+                + " exchanged with table " + result.otherTable() + " (" + result.rowsToOther()
+                + " rows out, " + result.rowsToParent() + " rows in)";
+    }
+
+    /**
+     * Exchanges one partition's rows with another table's rows atomically.
+     *
+     * @param parentTableName the partitioned table
+     * @param partitionName   the partition to exchange
+     * @param otherTableName  the table that supplies the replacement rows
+     * @return details of the performed swap
+     */
+    public PartitionExchange.ExchangeResult exchangePartition(String parentTableName,
+                                                              String partitionName,
+                                                              String otherTableName) {
+        return PartitionExchange.exchange(this, parentTableName, partitionName, otherTableName);
+    }
+
+    /**
+     * Attaches a two-level (level-2) partitioning scheme to an existing
+     * level-1 partition (prompt4 #65). LIST schemes take one value list per
+     * subpartition; HASH schemes take the total number of subpartitions.
+     *
+     * @param parentTableName the partitioned table name
+     * @param partitionName   the level-1 partition to subdivide
+     * @param type            LIST or HASH
+     * @param column          the level-2 partitioning column
+     * @param listValues      one value list per LIST subpartition, or null
+     * @param hashPartitions  number of HASH subpartitions, or null
+     * @return the registered scheme
+     */
+    public Subpartition createSubpartition(String parentTableName, String partitionName,
+                                           PartitionManager.PartitionType type, String column,
+                                           List<List<Object>> listValues, Integer hashPartitions) {
+        Table parent = getTable(parentTableName);
+        PartitionManager manager = parent.getPartitionManager();
+        if (manager == null || !parent.isPartitioned()) {
+            throw new IllegalArgumentException("Table " + parentTableName + " is not partitioned");
+        }
+        if (manager.findPartitionByName(partitionName) == null) {
+            throw new IllegalArgumentException("Partition " + partitionName
+                    + " does not exist in table " + parentTableName);
+        }
+
+        List<PartitionManager.Partition> parts = new ArrayList<>();
+        PartitionManager.Partition defaultPart = null;
+        if (type == PartitionManager.PartitionType.LIST) {
+            if (listValues == null || listValues.isEmpty()) {
+                throw new IllegalArgumentException("LIST subpartitioning requires value lists");
+            }
+            for (int i = 0; i < listValues.size(); i++) {
+                List<Object> values = listValues.get(i);
+                ListPartition part = new ListPartition(partitionName + "_sub_" + i, parent, values);
+                if (containsNull(values)) {
+                    defaultPart = part;
+                } else {
+                    parts.add(part);
+                }
+            }
+        } else if (type == PartitionManager.PartitionType.HASH) {
+            int total = hashPartitions == null ? 4 : hashPartitions;
+            if (total <= 0) {
+                throw new IllegalArgumentException("HASH subpartition count must be positive");
+            }
+            for (int i = 0; i < total; i++) {
+                parts.add(new HashPartition(partitionName + "_sub_" + i, parent, i, total));
+            }
+        } else {
+            throw new IllegalArgumentException("Subpartition type must be LIST or HASH: " + type);
+        }
+
+        Subpartition sub = new Subpartition(
+                partitionName + "_" + type.name().toLowerCase(java.util.Locale.ROOT),
+                partitionName, type, column, parts, defaultPart);
+        manager.addSubpartition(sub);
+        queryCache.invalidateAll();
+        return sub;
+    }
+
+    private static boolean containsNull(List<?> values) {
+        if (values == null) {
+            return false;
+        }
+        for (Object value : values) {
+            if (value == null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -3796,6 +3902,15 @@ catalog.createTableSchema(
             throw new TableNotFoundException(ErrorMessages.TABLE_PREFIX + tableName + ErrorMessages.DOES_NOT_EXIST);
         }
         return table;
+    }
+
+    /**
+     * Invalidates cached query plans after a metadata/data swap performed by
+     * {@link diesel.partition.PartitionExchange}. Called from package
+     * {@code diesel.partition}, hence public.
+     */
+    public void invalidateQueryCache() {
+        queryCache.invalidateAll();
     }
 
     /**
