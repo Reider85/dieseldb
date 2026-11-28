@@ -1151,3 +1151,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.18 PARTITION_PRUNING: RANGE/LIST/HASH pruning with EXPLAIN output; fix DROP TABLE IF EXISTS parsing and multi-value LIST definitions
 
 3.5.19 R3-017 step 3: EXCHANGE PARTITION + two-level LIST/HASH subpartitioning with pruning
+
+3.5.20 R3-018 step 1: StatisticsCollector with per-column stats, equi-depth histogram, DIESEL_STATS and auto-analyze

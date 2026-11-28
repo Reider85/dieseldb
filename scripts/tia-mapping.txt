@@ -237,6 +237,7 @@ diesel/DropSubscriptionQuery.java	query,storage
 diesel/CreateReplicationSlotQuery.java	query,storage
 diesel/DropReplicationSlotQuery.java	query,storage
 diesel/ReplicationCoordinator.java	query,storage
+diesel/optimizer/*.java	query,query-full
 diesel/SyncAck.java	query,storage
 diesel/SyncReplicationCoordinator.java	query,storage
 diesel/logging/*.java	smoke,query

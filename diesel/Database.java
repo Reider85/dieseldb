@@ -1,5 +1,6 @@
 package diesel;
 
+import diesel.optimizer.StatisticsCollector;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -2851,6 +2852,21 @@ catalog.createTableSchema(
         }
     }
 
+    public Table ensureStatsTable() {
+        Table stats = tables.get(StatisticsCollector.STATS_TABLE);
+        if (stats == null) {
+            synchronized (this) {
+                stats = tables.get(StatisticsCollector.STATS_TABLE);
+                if (stats == null) {
+                    ensureSystemTable(StatisticsCollector.STATS_TABLE,
+                            StatisticsCollector.STATS_COLUMNS, null);
+                    stats = tables.get(StatisticsCollector.STATS_TABLE);
+                }
+            }
+        }
+        return stats;
+    }
+
     private void ensureSystemTables() {
         ensureSystemTable(UserStoreBackend.USERS,
                 List.of("ID", "NAME", "PASSWORD_HASH", "CREATED_AT"), "ID");
@@ -3411,16 +3427,32 @@ catalog.createTableSchema(
     }
 
     private Object executeDmlQuery(Query<?> parsedQuery, Table table, String tableName, Transaction currentTransaction) {
+        Object dmlResult;
         if (autoCommit && (currentTransaction == null || !currentTransaction.isActive())) {
-            return executeAutoCommitDml(parsedQuery, table, tableName);
+            dmlResult = executeAutoCommitDml(parsedQuery, table, tableName);
+        } else if (currentTransaction != null && currentTransaction.isActive()) {
+            dmlResult = executeTransactionDml(parsedQuery, table, tableName, currentTransaction);
+        } else {
+            dmlResult = parsedQuery.execute(table);
+            Table.flushPendingPersistsForDataDir(this.dataDir);
+            table.saveToFile(tableName);
         }
-        if (currentTransaction != null && currentTransaction.isActive()) {
-            return executeTransactionDml(parsedQuery, table, tableName, currentTransaction);
-        }
-        Object dmlResult = parsedQuery.execute(table);
-        Table.flushPendingPersistsForDataDir(this.dataDir);
-        table.saveToFile(tableName);
+        StatisticsCollector.noteRowsChanged(table, affectedRows(parsedQuery));
+        StatisticsCollector.maybeAutoAnalyze(this, table);
         return dmlResult;
+    }
+
+    private static long affectedRows(Query<?> parsedQuery) {
+        if (parsedQuery instanceof InsertQuery insert) {
+            return insert.getLastAffectedRows();
+        }
+        if (parsedQuery instanceof UpdateQuery update) {
+            return update.getLastAffectedRows();
+        }
+        if (parsedQuery instanceof DeleteQuery delete) {
+            return delete.getLastAffectedRows();
+        }
+        return 0;
     }
 
     private Object executeAutoCommitDml(Query<?> parsedQuery, Table table, String tableName) {

@@ -51,7 +51,7 @@ public class ConfigLoader {
         return load().getProperty(key, defaultValue);
     }
 
-    static int getInt(String key, int defaultValue) {
+    public static int getInt(String key, int defaultValue) {
         String raw = load().getProperty(key);
         if (raw == null) {
             return defaultValue;
@@ -75,7 +75,7 @@ public class ConfigLoader {
         }
     }
 
-    static double getDouble(String key, double defaultValue) {
+    public static double getDouble(String key, double defaultValue) {
         String raw = load().getProperty(key);
         if (raw == null) {
             return defaultValue;

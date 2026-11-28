@@ -155,7 +155,7 @@
 | 63 | R3-017 | PARTITION BY RANGE/LIST/HASH | MISSING | — | — | Нет `PARTITION BY` в QueryParser (Avro `*Partitioner` — storage layout, не DDL) |
 | 64 | R3-017 | Partition pruning | MISSING | — | — | Нет partitions → нет pruning в QueryOptimizer |
 | 65 | R3-017 | EXCHANGE PARTITION + subpartition | MISSING | — | — | Нет токена |
-| 66 | R3-018 | StatisticsCollector (pg_stats) | PARTIAL | `diesel/AnalyzeTableQuery.java` (45 LOC) | `AnalyzeTableTest.java` | Только row-count + avg-row-size, нет column-level NDV/MCV/histogram, **нет StatisticsCollector class** |
+| 66 | R3-018 | StatisticsCollector (pg_stats) | DONE | `diesel/optimizer/{StatisticsCollector,ColumnStatistics,Histogram}.java`, `diesel/AnalyzeTableQuery.java`, `diesel/Table.java`, `diesel/Database.java` | `StatsTest.java`, `HistogramTest.java`, `AutoAnalyzeTest.java` | null_frac, distinct, MCV top-N, equi-depth 100 buckets, DIESEL_STATS, ANALYZE [TABLE], auto-analyze >20 % (min 100 rows) |
 | 67 | R3-018 | CostEstimator + access path | PARTIAL | `diesel/QueryOptimizer.java`, cost в `SelectQuery.preferNestedLoopByStatistics` | `QueryOptimizerTest.java` | Adaptive replanning + PlanCache, но только join-cost, **нет scan-vs-index selection** |
 | 68 | R3-018 | Join algorithms cost + plan | DONE | `diesel/SelectQuery.java` (hashJoin, runBlockNestedLoopJoin, runPartitionedHashJoin, preferNestedLoopByStatistics) | `HashJoinMemoryTest.java`, `JoinTest.java`, `JoinQueryTest.java` | In-memory + partitioned hash + block nested loop |
 | 69 | R3-018 | Subquery unnesting + PlanCache | PARTIAL | `diesel/{SubqueryParser,SubqueryResolver,SubqueryConstants,QueryCache}.java` | `SubqueriesTest.java`, `QueryCacheTest.java` | Subquery execution + PlanCache есть, **нет unnesting/decorrelation** |

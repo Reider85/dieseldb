@@ -1414,10 +1414,14 @@ class QueryParser {
      */
     private Query<?> parseAnalyzeTableQuery(String normalized) {
         String rest = normalized.substring(SqlKeywords.ANALYZE.length()).trim();
-        if (!rest.toUpperCase().startsWith(SqlKeywords.TABLE)) {
+        String upper = rest.toUpperCase();
+        if (upper.equals(SqlKeywords.TABLE)) {
             throw new IllegalArgumentException("Invalid ANALYZE TABLE syntax: expected 'ANALYZE TABLE <table name>'");
         }
-        String tableName = rest.substring(SqlKeywords.TABLE.length()).trim();
+        if (upper.startsWith(SqlKeywords.TABLE + " ")) {
+            rest = rest.substring(SqlKeywords.TABLE.length()).trim();
+        }
+        String tableName = rest;
         if (tableName.endsWith(";")) {
             tableName = tableName.substring(0, tableName.length() - 1).trim();
         }

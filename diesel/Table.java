@@ -1,5 +1,6 @@
 package diesel;
 
+import diesel.optimizer.ColumnStatistics;
 import java.io.BufferedWriter;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -239,6 +240,8 @@ public class Table implements Serializable {
     private long rowCount;
     private long avgRowSizeBytes;
     private long lastAnalyzedMillis;
+    private volatile Map<String, ColumnStatistics> columnStatistics = new HashMap<>();
+    private final AtomicLong rowsChangedSinceAnalyze = new AtomicLong();
     /**
      * Monotonically increasing version counter, incremented on every DML
      * mutation. Used for optimistic concurrency control at COMMIT time.
@@ -1802,6 +1805,28 @@ public class Table implements Serializable {
         }
     }
 
+    public Map<String, ColumnStatistics> getColumnStatistics() {
+        return columnStatistics;
+    }
+
+    public void setColumnStatistics(Map<String, ColumnStatistics> statistics) {
+        this.columnStatistics = Map.copyOf(statistics);
+    }
+
+    public long getRowsChangedSinceAnalyze() {
+        return rowsChangedSinceAnalyze.get();
+    }
+
+    public void noteRowsChanged(long rows) {
+        if (rows > 0) {
+            rowsChangedSinceAnalyze.addAndGet(rows);
+        }
+    }
+
+    public long resetRowsChangedSinceAnalyze() {
+        return rowsChangedSinceAnalyze.getAndSet(0);
+    }
+
     /** Returns the current version of this table (incremented on every DML mutation). */
     public long getVersion() {
         return version.get();
@@ -2102,16 +2127,21 @@ public class Table implements Serializable {
      */
     public void replaceRowsAtomically(List<Map<String, Object>> newRows) {
         List<Map<String, Object>> replacement = new ArrayList<>(newRows);
-        rows.clear();
-        rows.addAll(replacement);
-        if (storage != null) {
-            storage.setRows(replacement);
+        tableLock.writeLock().lock();
+        try {
+            rows.clear();
+            rows.addAll(replacement);
+            if (storage != null) {
+                storage.setRows(replacement);
+            }
+            deletedRows = new BitSet();
+            rowVersions = new ConcurrentHashMap<>();
+            rowCount = replacement.size();
+            rebuildAllIndexes();
+            markStatsDirty();
+        } finally {
+            tableLock.writeLock().unlock();
         }
-        deletedRows = new BitSet();
-        rowVersions = new ConcurrentHashMap<>();
-        rowCount = replacement.size();
-        rebuildAllIndexes();
-        markStatsDirty();
     }
 
     /**

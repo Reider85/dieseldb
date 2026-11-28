@@ -1,5 +1,9 @@
 package diesel;
 
+import diesel.optimizer.ColumnStatistics;
+import diesel.optimizer.StatisticsCollector;
+import java.util.Map;
+
 /**
  * Executes an {@code ANALYZE TABLE} statement: forces a synchronous
  * recalculation of the table statistics (row count, average row size and the
@@ -38,8 +42,10 @@ class AnalyzeTableQuery implements Query<String> {
      */
     @Override
     public String execute(Table table) {
+        Map<String, ColumnStatistics> columnStats = StatisticsCollector.analyzeAndStore(table.getDatabase(), table);
         Table.TableStatistics stats = table.analyze();
         return "Table " + tableName + " analyzed: " + stats.getRowCount() + " rows, avg row size "
-                + stats.getAvgRowSizeBytes() + " bytes, last analyzed " + Table.formatTimestamp(stats.getLastAnalyzedMillis());
+                + stats.getAvgRowSizeBytes() + " bytes, last analyzed " + Table.formatTimestamp(stats.getLastAnalyzedMillis())
+                + ", " + columnStats.size() + " columns";
     }
 }
