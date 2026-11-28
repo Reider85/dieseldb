@@ -2,6 +2,10 @@ package diesel;
 
 import java.util.List;
 import java.util.Map;
+import diesel.partition.PartitionManager;
+import diesel.partition.PartitionPruningIntegration;
+import diesel.partition.RangePartition;
+import diesel.partition.ListPartition;
 
 /**
  * Executes an EXPLAIN statement: renders a textual execution-plan tree for a
@@ -54,6 +58,10 @@ class ExplainQuery implements Query<String> {
 
     private String executeSelect(SelectQuery select, Table table) {
         StringBuilder sb = new StringBuilder(select.describePlan(table));
+        
+        // Add partition pruning information if the table is partitioned
+        addPartitionPruningInfo(sb, table, select);
+        
         if (analyze) {
             long start = System.nanoTime();
             List<Map<String, Object>> rows = select.execute(table);
@@ -154,5 +162,49 @@ class ExplainQuery implements Query<String> {
             return dq.getLastAffectedRows();
         }
         return 0;
+    }
+    
+    /**
+     * Adds partition pruning information to the explain output.
+     */
+    private void addPartitionPruningInfo(StringBuilder sb, Table table, SelectQuery select) {
+        if (table.getPartitionManager() == null) {
+            return; // Table is not partitioned
+        }
+        
+        PartitionManager partitionManager = table.getPartitionManager();
+        
+        // Extract filter values from the WHERE clause conditions
+        Map<String, Object> filterValues = PartitionPruningIntegration.extractFilterValuesFromConditions(
+            select.getConditions());
+        
+        if (filterValues.isEmpty()) {
+            sb.append("\n  Partition pruning: No filter conditions on partition column - scanning all ")
+              .append(partitionManager.getPartitions().size()).append(" partitions");
+            return;
+        }
+        
+        // Apply partition pruning
+        PartitionManager.PartitionPruningResult pruningResult = 
+            partitionManager.routeSelectWithPruning(filterValues);
+        
+        sb.append("\n  Partition pruning: ").append(pruningResult.getPruningSummary());
+        
+        // Show detailed partition information if not too many partitions
+        if (pruningResult.getPartitionsToScan().size() <= 5) {
+            sb.append("\n  Partitions to scan:");
+            for (PartitionManager.Partition partition : pruningResult.getPartitionsToScan()) {
+                sb.append("\n    - ").append(partition.getName());
+                if (partition instanceof RangePartition) {
+                    RangePartition range = (RangePartition) partition;
+                    sb.append(" [").append(range.getMinValue()).append(" - ").append(range.getMaxValue()).append(")");
+                } else if (partition instanceof ListPartition) {
+                    ListPartition list = (ListPartition) partition;
+                    if (list.getPartitionValues() != null) {
+                        sb.append(" ").append(list.getPartitionValues());
+                    }
+                }
+            }
+        }
     }
 }

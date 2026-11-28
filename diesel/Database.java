@@ -11,6 +11,7 @@ import java.io.DataOutputStream;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -947,7 +948,93 @@ catalog.createTableSchema(
         // Create partition manager
         PartitionManager partitionManager = new PartitionManager(this, table.getName(), pmType, partitionInfo.column, new ArrayList<>(), null);
         
-        // For RANGE partitioning, create default partition
+        // Create actual partitions based on definitions if available
+        if (partitionInfo.partitionDefinitions != null && !partitionInfo.partitionDefinitions.isEmpty()) {
+            createPartitionsFromDefinitions(table, partitionManager, partitionInfo);
+        } else {
+            // Create default partition if no definitions provided
+            createDefaultPartition(table, partitionManager, partitionInfo);
+        }
+        
+        // Store partition manager in the table
+        table.setPartitionManager(partitionManager);
+        
+        // Mark table as partitioned
+        table.setPartitioned(true);
+        table.setPartitionType(partitionInfo.type.name());
+        table.setPartitionColumn(partitionInfo.column);
+        
+        LOGGER.info("Created partitioned table {} with primary key {} partitioned by {} on column {}", 
+                table.getName(), table.getPrimaryKeyColumn(), partitionInfo.type, partitionInfo.column);
+    }
+    
+    private void createPartitionsFromDefinitions(Table table, PartitionManager partitionManager, PartitionInfo partitionInfo) {
+        Class<?> columnType = table.getColumnTypes().get(partitionInfo.column);
+        Comparable<Object> comparator = createComparator(partitionInfo.column, table.getColumnTypes());
+        
+        Object previousMaxValue = null;
+        
+        for (Map<String, Object> partitionDef : partitionInfo.partitionDefinitions) {
+            String partitionName = (String) partitionDef.get("name");
+            String type = (String) partitionDef.get("type");
+            
+            if (partitionInfo.type == PartitionInfo.PartitionType.RANGE) {
+                if ("LESS_THAN".equals(type)) {
+                    Object value = parsePartitionValue((String) partitionDef.get("value"), columnType);
+                    RangePartition partition = new RangePartition(
+                        partitionName, 
+                        table,
+                        previousMaxValue, // lower bound is previous partition's max
+                        value, // upper bound
+                        comparator
+                    );
+                    partitionManager.addPartition(partition);
+                    LOGGER.info("Created range partition {} with min={}, max={}", partitionName, previousMaxValue, value);
+                    previousMaxValue = value; // update for next partition
+                } else if ("LESS_THAN_MAXVALUE".equals(type)) {
+                    // This is the last partition, no upper bound
+                    RangePartition partition = new RangePartition(
+                        partitionName, 
+                        table,
+                        previousMaxValue, // lower bound is previous partition's max
+                        null, // no upper bound (MAXVALUE)
+                        comparator
+                    );
+                    partitionManager.addPartition(partition);
+                    partitionManager.setDefaultPartition(partition);
+                    LOGGER.info("Created MAXVALUE partition {} with min={}", partitionName, previousMaxValue);
+                }
+            } else if (partitionInfo.type == PartitionInfo.PartitionType.LIST) {
+                List<Object> values = (List<Object>) partitionDef.get("values");
+                ListPartition partition = new ListPartition(
+                    partitionName, 
+                    table,
+                    values
+                );
+                partitionManager.addPartition(partition);
+                if (values.contains(null)) {
+                    partitionManager.setDefaultPartition(partition);
+                }
+            } else if (partitionInfo.type == PartitionInfo.PartitionType.HASH) {
+                // For HASH partitioning, the definition should specify total partitions
+                Integer totalPartitions = (Integer) partitionDef.get("total_partitions");
+                if (totalPartitions != null) {
+                    // Create hash partitions based on the total number
+                    for (int i = 0; i < totalPartitions; i++) {
+                        HashPartition partition = new HashPartition(
+                            table.getName() + "_partition_" + i, 
+                            table,
+                            i,
+                            totalPartitions
+                        );
+                        partitionManager.addPartition(partition);
+                    }
+                }
+            }
+        }
+    }
+    
+    private void createDefaultPartition(Table table, PartitionManager partitionManager, PartitionInfo partitionInfo) {
         if (partitionInfo.type == PartitionInfo.PartitionType.RANGE) {
             // Create a default partition for all values
             RangePartition defaultPartition = new RangePartition(
@@ -984,17 +1071,33 @@ catalog.createTableSchema(
                 partitionManager.addPartition(partition);
             }
         }
+    }
+    
+    private Object parsePartitionValue(String value, Class<?> expectedType) {
+        if (value == null) {
+            return null;
+        }
         
-        // Store partition manager in the table
-        table.setPartitionManager(partitionManager);
-        
-        // Mark table as partitioned
-        table.setPartitioned(true);
-        table.setPartitionType(partitionInfo.type.name());
-        table.setPartitionColumn(partitionInfo.column);
-        
-        LOGGER.info("Created partitioned table {} with primary key {} partitioned by {} on column {}", 
-                table.getName(), table.getPrimaryKeyColumn(), partitionInfo.type, partitionInfo.column);
+        if (expectedType == String.class) {
+            return value;
+        } else if (expectedType == Integer.class || expectedType == int.class) {
+            return Integer.parseInt(value);
+        } else if (expectedType == Long.class || expectedType == long.class) {
+            return Long.parseLong(value);
+        } else if (expectedType == Double.class || expectedType == double.class) {
+            return Double.parseDouble(value);
+        } else if (expectedType == java.math.BigDecimal.class) {
+            return new java.math.BigDecimal(value);
+        } else if (expectedType == java.time.LocalDate.class) {
+            return java.time.LocalDate.parse(value);
+        } else if (expectedType == java.sql.Date.class) {
+            return java.sql.Date.valueOf(value);
+        } else if (expectedType == java.time.LocalDateTime.class) {
+            return java.time.LocalDateTime.parse(value);
+        } else {
+            // Default to string
+            return value;
+        }
     }
 
     /**
@@ -3414,7 +3517,11 @@ catalog.createTableSchema(
         if (parts.length < 2) {
             throw new IllegalArgumentException("Cannot extract table name from query: invalid DROP TABLE format");
         }
-        String token = parts[1].split("\\s+")[0];
+        String remainder = parts[1].trim();
+        if (remainder.matches("(?i)^IF\\s+EXISTS\\b.*")) {
+            remainder = remainder.replaceFirst("(?i)^IF\\s+EXISTS\\s+", "");
+        }
+        String token = remainder.split("\\s+")[0];
         if (token.endsWith(";")) {
             token = token.substring(0, token.length() - 1);
         }

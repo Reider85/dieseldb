@@ -111,50 +111,47 @@ public class PartitionManager {
     }
     
     /**
-     * Routes a select operation to the appropriate partition(s).
+     * Routes a select operation to the appropriate partition(s) using partition pruning.
+     * This method uses the PartitionPruner to determine which partitions can be skipped.
+     * 
+     * @param filterValues the filter values from WHERE clause
+     * @return PruningResult containing partitions to scan and pruning information
+     */
+    public PartitionPruningResult routeSelectWithPruning(Map<String, Object> filterValues) {
+        LOGGER.info("=== routeSelectWithPruning called for table {} with filters {} ===", 
+                parentTableName, filterValues);
+        
+        // Use PartitionPruner to determine which partitions to scan
+        PartitionPruner.PruningResult pruningResult = PartitionPruner.prunePartitions(this, filterValues);
+        
+        LOGGER.info("=== Pruning result: {} partitions to scan, {} skipped, ratio {} ===", 
+                pruningResult.getPartitionsToScan().size(), 
+                pruningResult.getPartitionsSkipped(),
+                pruningResult.getPruningRatio());
+        
+        // Create enhanced result with additional information
+        return new PartitionPruningResult(
+                pruningResult.getPartitionsToScan(),
+                pruningResult.getPartitionsSkipped(),
+                pruningResult.getTotalPartitions(),
+                pruningResult.getReason(),
+                pruningResult.getPruningRatio()
+        );
+    }
+    
+    /**
+     * Routes a select operation to the appropriate partition(s) using partition pruning.
+     * This method uses the PartitionPruner to determine which partitions can be skipped.
      * 
      * @param filterValues the filter values from WHERE clause
      * @return list of partitions that might contain matching rows
+     * @deprecated Use routeSelectWithPruning() for better pruning information
      */
+    @Deprecated
     public List<Partition> routeSelect(Map<String, Object> filterValues) {
-        if (!filterValues.containsKey(partitionColumn)) {
-            // If partition column is not in filter, check all partitions
-            LOGGER.debug("Partition column {} not in filter, checking all partitions for table {}",
-                    partitionColumn, parentTableName);
-            List<Partition> allPartitions = new ArrayList<>(partitions);
-            if (defaultPartition != null) {
-                allPartitions.add(defaultPartition);
-            }
-            return allPartitions;
-        }
-        
-        Object filterValue = filterValues.get(partitionColumn);
-        List<Partition> matchingPartitions = new ArrayList<>();
-        
-        // Find partitions that contain the filter value
-        for (Partition partition : partitions) {
-            if (partition.containsValue(filterValue)) {
-                matchingPartitions.add(partition);
-            }
-        }
-        
-        if (!matchingPartitions.isEmpty()) {
-            LOGGER.debug("Found {} matching partitions for table {} with filter {} = {}",
-                    matchingPartitions.size(), parentTableName, partitionColumn, filterValue);
-            return matchingPartitions;
-        }
-        
-        // If no partition matches the filter value, only check default partition if it exists
-        if (defaultPartition != null) {
-            LOGGER.debug("No specific partition found for filter {} = {} in table {}, checking default partition",
-                    partitionColumn, filterValue, parentTableName);
-            return Collections.singletonList(defaultPartition);
-        }
-        
-        // No partitions match and no default partition
-        LOGGER.debug("No partitions match filter {} = {} in table {}", 
-                partitionColumn, filterValue, parentTableName);
-        return Collections.emptyList();
+        // Use the new pruning method but return only the partition list for backward compatibility
+        PartitionPruningResult pruningResult = routeSelectWithPruning(filterValues);
+        return pruningResult.getPartitionsToScan();
     }
     
     /**
@@ -249,5 +246,57 @@ public class PartitionManager {
     public void setPartitions(List<Partition> partitions) {
         this.partitions = partitions;
         LOGGER.info("Set partitions for table {}: {}", parentTableName, partitions.size());
+    }
+    
+    /**
+     * Enhanced result from partition pruning operation with additional metadata.
+     */
+    public static class PartitionPruningResult {
+        private final List<Partition> partitionsToScan;
+        private final int partitionsSkipped;
+        private final int totalPartitions;
+        private final String reason;
+        private final double pruningRatio;
+        
+        public PartitionPruningResult(List<Partition> partitionsToScan, 
+                                   int partitionsSkipped, int totalPartitions, 
+                                   String reason, double pruningRatio) {
+            this.partitionsToScan = Collections.unmodifiableList(new ArrayList<>(partitionsToScan));
+            this.partitionsSkipped = partitionsSkipped;
+            this.totalPartitions = totalPartitions;
+            this.reason = reason;
+            this.pruningRatio = pruningRatio;
+        }
+        
+        public List<Partition> getPartitionsToScan() {
+            return partitionsToScan;
+        }
+        
+        public int getPartitionsSkipped() {
+            return partitionsSkipped;
+        }
+        
+        public int getTotalPartitions() {
+            return totalPartitions;
+        }
+        
+        public String getReason() {
+            return reason;
+        }
+        
+        public double getPruningRatio() {
+            return pruningRatio;
+        }
+        
+        public String getPruningSummary() {
+            return String.format("Scan: %d, Skip: %d, Total: %d, Ratio: %.2f%%, Reason: %s", 
+                    partitionsToScan.size(), partitionsSkipped, totalPartitions, 
+                    pruningRatio * 100, reason);
+        }
+        
+        @Override
+        public String toString() {
+            return getPruningSummary();
+        }
     }
 }

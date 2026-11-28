@@ -113,6 +113,12 @@ class QueryParser {
             "(?i)\\bPARTITION\\s+OF\\s+(" + IDENTIFIER_PATTERN + ")\\s+DEFAULT\\s*$");
     private static final Pattern CREATE_PARTITIONED_TABLE_PATTERN = Pattern.compile(
             "CREATE\\s+TABLE\\s+(" + IDENTIFIER_PATTERN + ")\\s*\\((?:[^()]|\\([^()]*\\))*\\)\\s*PARTITION\\s+BY\\s+(RANGE|LIST|HASH)\\s*\\(\\s*(" + IDENTIFIER_PATTERN + ")\\s*\\)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern PARTITION_DEFINITION_PATTERN = Pattern.compile(
+            "(?i)PARTITION\\s+(" + IDENTIFIER_PATTERN + ")\\s+VALUES\\s+(LESS\\s+THAN\\s*\\(([^)]*)\\)|IN\\s*\\(([^)]*)\\))");
+    private static final Pattern PARTITION_MAXVALUE_PATTERN = Pattern.compile(
+            "(?i)VALUES\\s+LESS\\s+THAN\\s*\\(MAXVALUE\\)");
+    private static final Pattern HASH_PARTITION_PATTERN = Pattern.compile(
+            "(?i)PARTITION\\s+BY\\s+HASH\\s*\\(\\s*(" + IDENTIFIER_PATTERN + ")\\s*\\)\\s+PARTITIONS\\s+(\\d+)");
     
     private static final Pattern GRANT_PRIVILEGE_PATTERN = Pattern.compile(
             "(?i)^GRANT\\s+(" + PRIVILEGE_ACTIONS_PATTERN + ")\\s+(?:ON\\s+(" + IDENTIFIER_PATTERN + ")\\s+)?TO\\s+(" + IDENTIFIER_PATTERN + ")\\s*;?\\s*$");
@@ -1370,6 +1376,9 @@ class QueryParser {
         if (rest.endsWith(";")) {
             rest = rest.substring(0, rest.length() - 1).trim();
         }
+        if (rest.matches("(?i)^IF\\s+EXISTS\\b.*")) {
+            rest = rest.replaceFirst("(?i)^IF\\s+EXISTS\\s+", "").trim();
+        }
         if (rest.isEmpty()) {
             throw new IllegalArgumentException("DROP TABLE requires a table name");
         }
@@ -2034,7 +2043,7 @@ class QueryParser {
         String partitionClause = partitionMatcher.group(0); // The entire PARTITION BY clause
         LOGGER.debug("Partition clause for parsing: '{}'", partitionClause);
         
-        PartitionInfo partitionInfo = parsePartitionClause(partitionClause, tableName);
+        PartitionInfo partitionInfo = parsePartitionClause(tableDef, tableName);
         
         List<String> columnDefs = splitColumnDefinitions(columnsPart);
         List<String> columns = new ArrayList<>();
@@ -2100,7 +2109,152 @@ class QueryParser {
                 throw new IllegalArgumentException("Unsupported partition type: " + partitionTypeStr);
         }
         
-        return new PartitionInfo(partitionType, partitionColumn, tableName);
+        // Parse partition definitions
+        List<Map<String, Object>> partitionDefinitions = parsePartitionDefinitions(tableDef);
+        
+        return new PartitionInfo(partitionType, partitionColumn, tableName, partitionDefinitions);
+    }
+    
+    private List<Map<String, Object>> parsePartitionDefinitions(String tableDef) {
+        List<Map<String, Object>> partitionDefinitions = new ArrayList<>();
+        
+        // Check if this is HASH partitioning with PARTITIONS clause
+        Matcher hashMatcher = HASH_PARTITION_PATTERN.matcher(tableDef);
+        if (hashMatcher.find()) {
+            // For HASH partitioning, we don't have individual partition definitions
+            // Instead, we create a single definition that specifies the number of partitions
+            Map<String, Object> hashDef = new HashMap<>();
+            hashDef.put("type", "HASH");
+            hashDef.put("total_partitions", Integer.parseInt(hashMatcher.group(2)));
+            partitionDefinitions.add(hashDef);
+            return partitionDefinitions;
+        }
+        
+        // For RANGE and LIST partitioning, parse individual partition definitions
+        int partitionByIndex = tableDef.indexOf("PARTITION BY");
+        if (partitionByIndex != -1) {
+            String partitionDefinitionsPart = tableDef.substring(partitionByIndex);
+            
+            // Find the opening parenthesis that contains the partition definitions
+            // This should be the second parenthesis in the string
+            int firstParen = partitionDefinitionsPart.indexOf('(');
+            if (firstParen != -1) {
+                int secondParen = partitionDefinitionsPart.indexOf('(', firstParen + 1);
+                if (secondParen != -1) {
+                    int parenCount = 1;
+                    int endIndex = secondParen + 1;
+                    while (endIndex < partitionDefinitionsPart.length() && parenCount > 0) {
+                        char c = partitionDefinitionsPart.charAt(endIndex);
+                        if (c == '(') {
+                            parenCount++;
+                        } else if (c == ')') {
+                            parenCount--;
+                        }
+                        endIndex++;
+                    }
+                    
+                    if (parenCount == 0) {
+                        String definitions = partitionDefinitionsPart.substring(secondParen + 1, endIndex - 1).trim();
+                        
+                        // Split on top-level commas only; commas inside VALUES IN (...) belong to one definition
+                        List<String> partitionDefs = splitPartitionDefinitions(definitions);
+                        for (String partitionDef : partitionDefs) {
+                            partitionDef = partitionDef.trim();
+                            if (!partitionDef.isEmpty()) {
+                                Map<String, Object> partitionDefMap = parseSinglePartitionDefinition(partitionDef);
+                                if (partitionDefMap != null) {
+                                    partitionDefinitions.add(partitionDefMap);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return partitionDefinitions;
+    }
+    
+    private List<String> splitPartitionDefinitions(String definitions) {
+        List<String> result = new ArrayList<>();
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < definitions.length(); i++) {
+            char c = definitions.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                result.add(definitions.substring(start, i));
+                start = i + 1;
+            }
+        }
+        result.add(definitions.substring(start));
+        return result;
+    }
+
+    private Map<String, Object> parseSinglePartitionDefinition(String partitionDef) {
+        // Handle MAXVALUE case first
+        if (partitionDef.contains("MAXVALUE")) {
+            // Extract partition name using regex
+            Pattern namePattern = Pattern.compile("PARTITION\\s+([^\\s]+)");
+            Matcher nameMatcher = namePattern.matcher(partitionDef);
+            if (nameMatcher.find()) {
+                String partitionName = nameMatcher.group(1);
+                Map<String, Object> definition = new HashMap<>();
+                definition.put("name", partitionName);
+                definition.put("type", "LESS_THAN_MAXVALUE");
+                return definition;
+            }
+        }
+        
+        Matcher partitionMatcher = PARTITION_DEFINITION_PATTERN.matcher(partitionDef);
+        if (partitionMatcher.find()) {
+            String partitionName = partitionMatcher.group(1);
+            Map<String, Object> definition = new HashMap<>();
+            definition.put("name", partitionName);
+            
+            String lessThanValue = partitionMatcher.group(3);
+            String inValues = partitionMatcher.group(4);
+            
+            if (lessThanValue != null) {
+                // Handle VALUES LESS THAN
+                if (lessThanValue.trim().equalsIgnoreCase("MAXVALUE")) {
+                    definition.put("type", "LESS_THAN_MAXVALUE");
+                } else {
+                    definition.put("type", "LESS_THAN");
+                    // Parse the value (remove quotes)
+                    String value = lessThanValue.trim();
+                    if (value.startsWith("'") && value.endsWith("'")) {
+                        value = value.substring(1, value.length() - 1);
+                    }
+                    definition.put("value", value);
+                }
+            } else if (inValues != null) {
+                // Handle VALUES IN
+                definition.put("type", "IN");
+                // Parse the list of values
+                String[] values = inValues.split(",");
+                List<String> valueList = new ArrayList<>();
+                for (String value : values) {
+                    value = value.trim();
+                    if (value.startsWith("'") && value.endsWith("'")) {
+                        value = value.substring(1, value.length() - 1);
+                    }
+                    if (value.equalsIgnoreCase("NULL")) {
+                        valueList.add(null);
+                    } else {
+                        valueList.add(value);
+                    }
+                }
+                definition.put("values", valueList);
+            }
+            
+            return definition;
+        }
+        
+        return null;
     }
 
     private String extractCreateTableName(String original, int firstParen) {

@@ -107,4 +107,66 @@ public class ListPartition implements PartitionManager.Partition {
     public int hashCode() {
         return Objects.hash(name, table, partitionValues);
     }
+    
+    /**
+     * Checks if this partition can be skipped based on a filter value.
+     * 
+     * @param filterValue the filter value to check against
+     * @return true if this partition can be skipped (doesn't contain the value)
+     */
+    public boolean canSkipByFilter(Object filterValue) {
+        if (partitionValues == null) {
+            // Default partition cannot be skipped
+            return false;
+        }
+        
+        return !containsValue(filterValue);
+    }
+    
+    /**
+     * Checks if this partition can be skipped based on a list of IN values.
+     * 
+     * @param inValues the list of values from an IN clause
+     * @return true if this partition can be skipped (doesn't contain any of the IN values)
+     */
+    public boolean canSkipByIn(Collection<?> inValues) {
+        if (partitionValues == null) {
+            // Default partition cannot be skipped
+            return false;
+        }
+        
+        if (inValues == null || inValues.isEmpty()) {
+            return false;
+        }
+        
+        // Check if any value in the IN list matches this partition
+        for (Object value : inValues) {
+            if (containsValue(value)) {
+                return false; // Can't skip - partition contains a matching value
+            }
+        }
+        
+        return true; // Can skip - no values match this partition
+    }
+    
+    /**
+     * Gets the number of values in this partition.
+     * 
+     * @return the number of values, or -1 for default partitions
+     */
+    public int getValueCount() {
+        if (partitionValues == null) {
+            return -1; // Default partition
+        }
+        return partitionValues.size();
+    }
+    
+    /**
+     * Checks if this is a default partition (accepts any value).
+     * 
+     * @return true if this is a default partition
+     */
+    public boolean isDefault() {
+        return partitionValues == null;
+    }
 }

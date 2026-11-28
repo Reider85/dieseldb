@@ -1147,3 +1147,5 @@ Fix failing tests: AsyncWALWriter resource leak, FlusherTest WAL contamination, 
 3.5.15 Fix Security Scanning cache race: security-scan won the setup-java maven cache save (key=hash of pom.xml only) so dependency-scan's cache with the plugin was dropped and every next run re-resolved it from Central -> HTTP 429; give dependency-scan its own cache-dependency-path key and retry mvn up to 3x
 
 3.5.17 R3-017: PARTITION BY RANGE/LIST/HASH syntax + storage layout
+
+3.5.18 PARTITION_PRUNING: RANGE/LIST/HASH pruning with EXPLAIN output; fix DROP TABLE IF EXISTS parsing and multi-value LIST definitions
